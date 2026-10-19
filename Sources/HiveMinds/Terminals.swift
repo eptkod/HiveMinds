@@ -58,6 +58,7 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
         env["HIVEMINDS_AGENT"] = agent.id.uuidString
+        env.merge(SignIn.environment(for: agent.provider)) { $1 }
 
         var args: [String] = []
         switch agent.provider {
@@ -74,7 +75,8 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
             let session = agent.sessionID.uuidString.lowercased()
             args += agent.hasStarted ? ["--resume", session] : ["--session-id", session]
             launches[agent.id] = (Date(), agent.hasStarted)
-            args += ["--settings", store.hooksFile.path]
+            let usesKey = SignIn.apiKey(for: .claude) != nil
+            args += ["--settings", (usesKey ? store.hooksWithKeyFile : store.hooksFile).path]
             if agent.model != "default" { args += ["--model", agent.model] }
             args += agent.provider.effortArgs(agent.effort)
             if !agent.role.isEmpty { args += ["--append-system-prompt", agent.role] }
@@ -84,6 +86,7 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
             if !agent.hasStarted, let task = agent.pendingTask { args.append(task) }
             store.setStatus(agent.id, .starting, "Starting up")
         case .codex:
+            args += SignIn.codexArgs
             if agent.model != "default" { args += ["--model", agent.model] }
             args += agent.provider.effortArgs(agent.effort)
             if let access = agent.access { args += access.args(for: .codex) }

@@ -51,8 +51,9 @@ For development, `scripts/build-app.sh debug` builds a debug app. The build uses
 ## Where things live
 
 - Settings: Cmd+comma. Saved in UserDefaults (`com.ethan.hiveminds`), so they survive restarts.
-- App data: `~/Library/Application Support/HiveMinds/` holds `state.json` (projects, agents, browser tabs), the Claude settings file agents start with (`claude-hooks.json`), `statusline.sh` and `usage.json` for the plan usage meter, and per-agent event logs.
+- App data: `~/Library/Application Support/HiveMinds/` holds `state.json` (projects, agents, browser tabs), the Claude settings files agents start with (`claude-hooks.json`, plus `claude-hooks-api-key.json` and `claude-api-key.json` for API-key sign-in), `statusline.sh` and `usage.json` for the plan usage meter, and per-agent event logs.
 - Project workspace: pick a project's "Canvas" row to see every agent's terminal and every browser tab at once, each usable in place (drag a tile by its title bar to move it). Tabs along the top switch between agents, browser tabs and meetings (Cmd+T for a new browser tab, Cmd+G for the Canvas). Each of the project's meetings shows on the Canvas as a chat of what its seats say and write, then its outcome once it's finished; its X only takes it off the Canvas.
+- API keys: Settings > Accounts lets Claude Code and Codex each sign in with an API key instead of your plan. Keys are kept in the macOS Keychain ("HiveMinds API key"), never in a file.
 - Projects cloned from GitHub: `<projects folder>/<repo>`. HiveMinds asks for the folder the first time and remembers it; change it in Settings > Projects. An existing checkout (including Agent Office's) is reused.
 - Branding (logo, app icon, colours): `branding/`. Change `branding/scripts/render.swift`, run `branding/scripts/render.sh`, then rebuild the app.
 - Agents on their own branch: `<project>/.hiveminds/worktrees/<title-slug>-<id>`.

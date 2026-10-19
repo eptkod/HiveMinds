@@ -40,6 +40,10 @@ final class AppStore {
     let eventsDir: URL
     let statusDir: URL
     let hooksFile: URL
+    /// The same settings plus `apiKeyHelper`, for agents that sign in with an API key.
+    let hooksWithKeyFile: URL
+    /// Only `apiKeyHelper`, for one-off Claude calls (chat titles, pull request text).
+    let keyOnlyFile: URL
     let statusLineScript: URL
     private let stateFile: URL
 
@@ -54,6 +58,8 @@ final class AppStore {
         eventsDir = supportDir.appendingPathComponent("events", isDirectory: true)
         statusDir = supportDir.appendingPathComponent("status", isDirectory: true)
         hooksFile = supportDir.appendingPathComponent("claude-hooks.json")
+        hooksWithKeyFile = supportDir.appendingPathComponent("claude-hooks-api-key.json")
+        keyOnlyFile = supportDir.appendingPathComponent("claude-api-key.json")
         stateFile = supportDir.appendingPathComponent("state.json")
         statusLineScript = supportDir.appendingPathComponent("statusline.sh")
         usage = UsageModel(file: supportDir.appendingPathComponent("usage.json"))
@@ -134,9 +140,19 @@ final class AppStore {
             "hooks": hooks,
             "statusLine": ["type": "command", "command": "/bin/sh '\(statusLineScript.path)'"],
         ]
-        if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: hooksFile, options: .atomic)
+        // Claude Code asks this command for the key. It prints our variable, so the key itself never touches disk.
+        let keyHelper = ["apiKeyHelper": "printenv \(SignIn.envName(for: .claude))"]
+        for (file, contents) in [(hooksFile, settings), (hooksWithKeyFile, settings.merging(keyHelper) { $1 }),
+                                 (keyOnlyFile, keyHelper)] {
+            if let data = try? JSONSerialization.data(withJSONObject: contents, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: file, options: .atomic)
+            }
         }
+    }
+
+    /// Settings for a one-off Claude call, so it uses the API key when Claude signs in with one.
+    var claudeKeyArgs: [String] {
+        SignIn.apiKey(for: .claude) != nil ? ["--settings", keyOnlyFile.path] : []
     }
 
     /// Claude Code hands its status line command the session's state, including how much of the plan's
@@ -346,8 +362,8 @@ final class AppStore {
             + "with this request. Reply with only the title.\n\nRequest: \(prompt.prefix(2000))"
         Task {
             // The prompt goes before the flags: --tools takes every word after it.
-            let r = await Shell.run(claude, ["-p", ask, "--model", "haiku", "--no-session-persistence", "--tools", ""],
-                                    cwd: supportDir.path)
+            let r = await Shell.run(claude, ["-p", ask, "--model", "haiku", "--no-session-persistence"] + claudeKeyArgs + ["--tools", ""],
+                                    cwd: supportDir.path, env: SignIn.environment(for: .claude))
             let title = r.out.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"'.")))
             guard r.ok, !title.isEmpty, title.count <= 80, !title.contains("\n") else { return }
             update(id) { $0.title = title }

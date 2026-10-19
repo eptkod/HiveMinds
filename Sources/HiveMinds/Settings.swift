@@ -22,6 +22,8 @@ enum SettingKey {
     static let meetingCommit = "meetings.commit"
     static let settingsTab = "settings.tab"
     static let projectsFolder = "projects.folder"
+    /// How each provider signs in: "plan" or "apiKey". The key itself is in the Keychain.
+    static func signIn(_ provider: Provider) -> String { "signIn.\(provider.rawValue)" }
 }
 
 enum SettingDefault {
@@ -44,6 +46,7 @@ enum SettingDefault {
     static let meetingCommit = true
     /// Empty until the first GitHub download asks for a folder.
     static let projectsFolder = ""
+    static let signIn = SignIn.plan.rawValue
 }
 
 /// The agent settings as plain values, for code outside a view (the New Agent sheet, the store).
@@ -176,6 +179,9 @@ struct SettingsView: View {
             }
             Tab("Projects", systemImage: "folder", value: "projects") {
                 ProjectSettings()
+            }
+            Tab("Accounts", systemImage: "key", value: "accounts") {
+                AccountSettings()
             }
         }
         .frame(width: 540)
@@ -427,6 +433,86 @@ struct ProjectSettings: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// How Claude Code and Codex sign in: through your plan, or with an API key billed per token.
+struct AccountSettings: View {
+    var body: some View {
+        Form {
+            ForEach(Provider.allCases) { ProviderSignIn(provider: $0) }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct ProviderSignIn: View {
+    let provider: Provider
+    @AppStorage private var signIn: String
+    @State private var draft = ""
+    @State private var hint: String?
+    @State private var failed = false
+
+    init(provider: Provider) {
+        self.provider = provider
+        _signIn = AppStorage(wrappedValue: SettingDefault.signIn, SettingKey.signIn(provider))
+    }
+
+    private var plan: String { provider == .claude ? "Claude plan" : "ChatGPT plan" }
+    private var keySite: String { provider == .claude ? "console.anthropic.com" : "platform.openai.com" }
+    private var keyPrompt: String { provider == .claude ? "sk-ant-…" : "sk-…" }
+
+    var body: some View {
+        Section {
+            SettingRow(explainer: signIn == SignIn.apiKey.rawValue
+                       ? "Agents are billed per token to your API account at \(keySite), not your \(plan)."
+                       : "Agents use the account \(provider == .claude ? "claude" : "codex") is signed in to, and count toward your \(plan)'s limits.") {
+                Picker("Sign in with", selection: $signIn) {
+                    Text(plan).tag(SignIn.plan.rawValue)
+                    Text("API key").tag(SignIn.apiKey.rawValue)
+                }
+            }
+            if signIn == SignIn.apiKey.rawValue {
+                if let hint {
+                    SettingRow(explainer: "Kept in your Mac's Keychain. HiveMinds hands it only to the agents it starts.") {
+                        HStack {
+                            Text("API key")
+                            Spacer()
+                            Text("Saved \(hint)").foregroundStyle(.secondary).monospaced()
+                            Button("Remove", role: .destructive) {
+                                APIKeys.remove(provider)
+                                self.hint = nil
+                            }
+                        }
+                    }
+                } else {
+                    SettingRow(explainer: failed
+                               ? "Couldn't save the key to the Keychain. Try again."
+                               : "Paste a key from \(keySite). Until one is saved, agents keep using your \(plan).") {
+                        HStack {
+                            SecureField("API key", text: $draft, prompt: Text(keyPrompt))
+                            Button("Save") {
+                                failed = !APIKeys.set(draft, for: provider)
+                                if !failed { draft = ""; hint = APIKeys.hint(provider) }
+                            }
+                            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text(provider.label)
+        } footer: {
+            if provider == Provider.allCases.last {
+                Text("Changes apply to agents when they start or restart. Agents already running keep how they signed in.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { if signIn == SignIn.apiKey.rawValue { hint = APIKeys.hint(provider) } }
+        .onChange(of: signIn) { _, new in if new == SignIn.apiKey.rawValue { hint = APIKeys.hint(provider) } }
     }
 }
 

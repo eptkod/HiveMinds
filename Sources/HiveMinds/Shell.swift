@@ -60,14 +60,14 @@ enum Shell {
         }
     }
 
-    static func run(_ exe: String, _ args: [String], cwd: String? = nil) async -> Result {
+    static func run(_ exe: String, _ args: [String], cwd: String? = nil, env extra: [String: String] = [:]) async -> Result {
         await withCheckedContinuation { cont in
             DispatchQueue.global().async {
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
                 if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-                p.environment = environment
+                p.environment = environment.merging(extra) { $1 }
                 let o = Pipe(), e = Pipe()
                 p.standardOutput = o
                 p.standardError = e

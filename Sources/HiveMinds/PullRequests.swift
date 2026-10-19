@@ -83,8 +83,8 @@ extension AppStore {
         \(diff.out.prefix(30_000))
         """
         // The prompt goes before the flags: --tools takes every word after it.
-        let r = await Shell.run(claude, ["-p", ask, "--model", "haiku", "--no-session-persistence", "--tools", ""],
-                                cwd: supportDir.path)
+        let r = await Shell.run(claude, ["-p", ask, "--model", "haiku", "--no-session-persistence"] + claudeKeyArgs + ["--tools", ""],
+                                cwd: supportDir.path, env: SignIn.environment(for: .claude))
         guard r.ok else { return nil }
         let text = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
         let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)

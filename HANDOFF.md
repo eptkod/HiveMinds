@@ -73,6 +73,7 @@ Probably skip (confirm with Ethan): multi-user accounts, voice chat, screen shar
 - **Effort is selectable per agent, with a default in Settings** (2026-10-19). No "Default" level: the setting always names a real level (starts on Medium). It has to work across providers even though they name the levels differently.
 - **Projects folder for GitHub downloads** (2026-10-19): Ethan wants new projects from GitHub to go into one folder he picks. HiveMinds asks the first time and remembers it; he left the details to Claude.
 - **Agents have no names** (2026-10-19). Each one shows a short title for its chat instead. The New Agent sheet should be minimal, and shouldn't ask for a project when you start it from one.
+- **API keys as well as plans** (2026-10-19): Claude Code and Codex can each sign in with an API key instead of the plan login, chosen in Settings > Accounts. Keys go in the Keychain.
 - **Agent access level is a choice, with a default in Settings** (2026-10-19): Auto review, Manual review or Unrestricted, picked per agent in New Agent > Options and defaulted in Settings > Agents.
 
 ## Progress (2026-10-19)
@@ -234,6 +235,15 @@ Build notes:
 
 - **First release packaged and pushed (2026-10-19).** Added `scripts/build-dmg.sh`: release build, then `build/HiveMinds-<version>.dmg` holding the app and an Applications shortcut. Verified with `hdiutil verify` (checksum valid), mounted it and checked `codesign -v` on the app inside. The app is only ad-hoc signed, not notarised, so downloaders get a Gatekeeper prompt (README explains the workaround). Rewrote `README.md` as the public front page with the wordmark and icon from `branding/`, features, install and build steps. First commit pushed to `github.com/eptkod/HiveMinds` (public). The DMG is not in git (`build/` is ignored); Released as v0.1.0 the same day (https://github.com/eptkod/HiveMinds/releases/tag/v0.1.0) with the DMG and a zip of the .app (`ditto -c -k --keepParent`); the README's Install section links to the latest release.
 
+- 2026-10-19: **API keys for Claude Code and Codex.** New Settings > Accounts tab: for each provider, "Sign in with" your plan (default, as before) or an API key. The key is pasted once, saved in the macOS Keychain (`APIKeys` in new `APIKeys.swift`, service "HiveMinds API key", one item per provider), shown afterwards only as its last 4 characters, with Remove. Until a key is saved, agents keep using the plan.
+  - **Claude Code:** the key goes to the agent in its own variable, `HIVEMINDS_ANTHROPIC_KEY`, and Claude Code reads it through `apiKeyHelper: printenv HIVEMINDS_ANTHROPIC_KEY`. That's set in a second settings file, `claude-hooks-api-key.json` (the hooks plus the helper), used instead of `claude-hooks.json` for those agents. Using `apiKeyHelper` instead of `ANTHROPIC_API_KEY` avoids Claude Code's "use this API key?" prompt, whose default answer is No. The chat-title and pull-request Haiku calls get `claude-api-key.json` (helper only) the same way. The key never touches disk.
+  - **Codex:** `codex login --with-api-key` would replace the ChatGPT login for every use of Codex, so instead agents get `-c model_provider="hiveminds-openai"` plus a matching `model_providers` entry with `env_key="HIVEMINDS_OPENAI_KEY"` (`SignIn.codexArgs`). `~/.codex/auth.json` and your own `codex` runs are untouched.
+  - Applies when an agent starts or restarts (meeting seats too). The Keychain is only read when a provider is set to API key, so plan users see no Keychain prompt. Because the app is ad-hoc signed, macOS may ask once after each rebuild whether HiveMinds may read its own key ("Always Allow").
+  - Token badge tooltip now says the estimate is roughly what API-key work is billed, and only a comparison for plan work. The usage meter still shows the Claude plan's limits.
+  - Verified: debug and release builds succeed with no errors. With bogus keys on the command line: Claude Code with the `apiKeyHelper` settings said the key "takes precedence over your claude.ai login"; Codex with the provider override sent the key to api.openai.com and got `401 invalid_api_key`, so both route to the API. The Keychain code (real `APIKeys.swift` with a stub `Provider`) saved, read back trimmed, hinted "…abcd", built the env and Codex args, and removed the item. Not verified: the Accounts tab on screen, and a real agent run on a real key (no key here). The app wasn't running, so nothing to reopen.
+
+- 2026-10-19: **Released HiveMinds 1.1** (tag `v1.1.0`) with the API key sign-in. Version 1.1.0, build 2 (`scripts/build-app.sh`). Built with `scripts/build-dmg.sh`; `hdiutil verify` passed, and the app inside the mounted DMG passes `codesign -v` and reports 1.1.0. Uploaded `HiveMinds-1.1.0.dmg` and `HiveMinds-1.1.0-app.zip`. Still ad-hoc signed, not notarised.
+
 Next, in order:
 0. Ethan presses ⌘W on a browser tab, an agent tab, a meeting and the Settings window to confirm it.
 1. Ethan reviews the look on screen. Glass surfaces couldn't be checked in automated captures.
@@ -255,6 +265,7 @@ Next, in order:
 13d. Ethan checks the Overview charts: hover the activity grid and the two bar charts, flip Tokens / Hours, and narrow the window to see the grid show fewer weeks.
 13e. Ethan checks the sidebar collapse: from the Overview each project shows just Canvas with an agent count; clicking Canvas or an agent tab opens the list; switching to another project collapses the first. Does the chain drop-in feel right (speed, bounce)?
 13b. Ethan checks the purple Ready dot is easy to tell apart from the blue Working dot.
+13f. Ethan pastes a real Anthropic and/or OpenAI key in Settings > Accounts, switches to API key, and starts an agent of each kind to confirm it bills the API account (check the provider's console).
 14. Auto one-line task summaries with Haiku (chat titles are done) and Codex status. (App icon done; Ethan to check it in the Dock.)
 
 ## GitHub connection (high priority)
@@ -308,7 +319,7 @@ Suggested implementation, subject to what the audit finds:
 
 ## Constraints and decisions so far
 - Personal use only; no billing, accounts, or distribution/signing needed yet (macOS notarization is only needed if shared).
-- Agents run on Ethan's own Claude subscription/CLI; the app must not store or read Claude credentials.
+- Agents run on Ethan's own Claude subscription/CLI by default. Since 2026-10-19 an API key can be used instead; it's stored only in the Keychain.
 - Lightweight is a hard requirement: low idle usage, no heavy 3D or game engine.
 - Mac first; keep Windows feasible.
 

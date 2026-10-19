@@ -233,7 +233,7 @@ struct TokenBadge: View {
         s += "\(f(t.input)) new input, \(f(t.cacheRead)) read from the cache, \(f(t.cacheWrite)) written to the cache, \(f(t.output)) output."
         if cost > 0 {
             s += "\n\nAt Claude API prices this would cost about \(Self.money(cost)), using Claude Code's own estimate. "
-            s += "A subscription isn't charged per token, so this is a comparison, not what you pay."
+            s += "Work done with an API key is billed about this much. A plan isn't charged per token, so for plan work it's only a comparison."
         }
         return s
     }
