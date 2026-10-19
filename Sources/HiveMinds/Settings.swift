@@ -1,0 +1,483 @@
+import SwiftUI
+import AppKit
+
+/// Settings are stored in UserDefaults through @AppStorage, so they're kept when the app quits.
+enum SettingKey {
+    static let backgroundOpacity = "ui.backgroundOpacity"
+    static let blurRadius = "ui.blurRadius"
+    static let showUsage = "ui.showUsage"
+    /// What the Overview's activity charts measure: tokens or hours.
+    static let overviewMetric = "ui.overviewMetric"
+    static let defaultProvider = "agents.defaultProvider"
+    static let defaultModel = "agents.defaultModel"
+    static let defaultEffort = "agents.defaultEffort"
+    static let ownBranch = "agents.ownBranch"
+    static let defaultAccess = "agents.defaultAccess"
+    static let defaultRole = "agents.defaultRole"
+    static let autoTitles = "agents.autoTitles"
+    static let meetingModel = "meetings.model"
+    static let meetingSeats = "meetings.seats"
+    static let meetingRounds = "meetings.rounds"
+    static let meetingAcceptEdits = "meetings.acceptEdits"
+    static let meetingCommit = "meetings.commit"
+    static let settingsTab = "settings.tab"
+    static let projectsFolder = "projects.folder"
+}
+
+enum SettingDefault {
+    static let backgroundOpacity = 0.78
+    static let blurRadius = 24.0
+    static let opacityRange = 0.2...1.0
+    static let blurRange = 0.0...60.0
+    static let showUsage = true
+    static let defaultProvider = Provider.claude.rawValue
+    static let defaultModel = "default"
+    static let defaultEffort = Effort.medium.rawValue
+    static let ownBranch = true
+    static let defaultAccess = Access.auto.rawValue
+    static let defaultRole = ""
+    static let autoTitles = true
+    static let meetingModel = "default"
+    static let meetingSeats = 3
+    static let meetingRounds = 2
+    static let meetingAcceptEdits = true
+    static let meetingCommit = true
+    /// Empty until the first GitHub download asks for a folder.
+    static let projectsFolder = ""
+}
+
+/// The agent settings as plain values, for code outside a view (the New Agent sheet, the store).
+enum AgentDefaults {
+    private static var d: UserDefaults { .standard }
+    static var provider: Provider { Provider(rawValue: d.string(forKey: SettingKey.defaultProvider) ?? "") ?? .claude }
+    static var model: String { d.string(forKey: SettingKey.defaultModel) ?? SettingDefault.defaultModel }
+    static var effort: Effort { Effort(rawValue: d.string(forKey: SettingKey.defaultEffort) ?? "") ?? .medium }
+    static var access: Access { Access(rawValue: d.string(forKey: SettingKey.defaultAccess) ?? "") ?? .auto }
+    static var ownBranch: Bool { d.object(forKey: SettingKey.ownBranch) as? Bool ?? SettingDefault.ownBranch }
+    static var role: String { d.string(forKey: SettingKey.defaultRole) ?? SettingDefault.defaultRole }
+    static var autoTitles: Bool { d.object(forKey: SettingKey.autoTitles) as? Bool ?? SettingDefault.autoTitles }
+}
+
+/// Where projects downloaded from GitHub go: `<folder>/<repo>`, or `<folder>/<owner>-<repo>` if that name is taken.
+enum ProjectFolder {
+    static var path: String? {
+        let p = UserDefaults.standard.string(forKey: SettingKey.projectsFolder) ?? SettingDefault.projectsFolder
+        return p.isEmpty ? nil : p
+    }
+
+    static var suggested: String { NSHomeDirectory() + "/HiveMinds/projects" }
+
+    static func destinations(for repo: String, in folder: String) -> [String] {
+        let parts = repo.split(separator: "/").map(String.init)
+        guard parts.count == 2 else { return [folder + "/" + repo] }
+        return ["\(folder)/\(parts[1])", "\(folder)/\(parts[0])-\(parts[1])"]
+    }
+
+    /// Asks for the folder and saves it. Returns nil if cancelled.
+    @MainActor @discardableResult
+    static func choose(firstTime: Bool = false) -> String? {
+        let start = path ?? suggested
+        try? FileManager.default.createDirectory(atPath: start, withIntermediateDirectories: true)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: start)
+        panel.prompt = "Use This Folder"
+        panel.message = firstTime
+            ? "Where should projects from GitHub go? Each one gets its own folder inside. You can change this later in Settings > Projects."
+            : "Where should projects from GitHub go? Each one gets its own folder inside."
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        let chosen = (url.path as NSString).standardizingPath
+        UserDefaults.standard.set(chosen, forKey: SettingKey.projectsFolder)
+        return chosen
+    }
+}
+
+// MARK: Window look
+
+/// Makes a window see-through to the desktop, tinted black, with the chosen blur behind it.
+struct WindowAppearance: ViewModifier {
+    @AppStorage(SettingKey.backgroundOpacity) private var opacity = SettingDefault.backgroundOpacity
+    @AppStorage(SettingKey.blurRadius) private var blur = SettingDefault.blurRadius
+
+    func body(content: Content) -> some View {
+        content
+            .containerBackground(Color.black.opacity(clampedOpacity), for: .window)
+            .background(WindowConfigurator(blur: Int(blur.rounded())))
+            .onChange(of: opacity, initial: true) { _, _ in Terminals.shared.applyAppearance() }
+    }
+
+    private var clampedOpacity: Double {
+        min(max(opacity, SettingDefault.opacityRange.lowerBound), SettingDefault.opacityRange.upperBound)
+    }
+}
+
+/// Reaches the NSWindow behind a SwiftUI view to turn off its opaque backing and set the blur.
+private struct WindowConfigurator: NSViewRepresentable {
+    let blur: Int
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { apply(to: view.window) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { apply(to: view.window) }
+    }
+
+    private func apply(to window: NSWindow?) {
+        guard let window else { return }
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        WindowBlur.set(window, radius: blur)
+    }
+}
+
+/// The blur behind a window. macOS has no public API for its strength; this uses the same private
+/// CoreGraphics call as iTerm2's blur setting, looked up at run time so a future macOS without it
+/// simply shows no blur instead of crashing.
+enum WindowBlur {
+    private typealias MainConnection = @convention(c) () -> Int32
+    private typealias SetRadius = @convention(c) (Int32, UInt32, Int32) -> Int32
+
+    private static let functions: (MainConnection, SetRadius)? = {
+        let handle = UnsafeMutableRawPointer(bitPattern: -2) // RTLD_DEFAULT
+        guard let c = dlsym(handle, "CGSMainConnectionID"),
+              let s = dlsym(handle, "CGSSetWindowBackgroundBlurRadius") else { return nil }
+        return (unsafeBitCast(c, to: MainConnection.self), unsafeBitCast(s, to: SetRadius.self))
+    }()
+
+    @discardableResult
+    static func set(_ window: NSWindow, radius: Int) -> Bool {
+        guard let (connection, setRadius) = functions, window.windowNumber > 0 else { return false }
+        return setRadius(connection(), UInt32(window.windowNumber), Int32(max(0, radius))) == 0
+    }
+}
+
+// MARK: Settings window
+
+struct SettingsView: View {
+    /// Reopens on the tab you last looked at.
+    @AppStorage(SettingKey.settingsTab) private var tab = "appearance"
+
+    var body: some View {
+        TabView(selection: $tab) {
+            Tab("Appearance", systemImage: "paintbrush", value: "appearance") {
+                AppearanceSettings()
+            }
+            Tab("Agents", systemImage: "person.2", value: "agents") {
+                AgentSettings()
+            }
+            Tab("Meetings", systemImage: "bubble.left.and.bubble.right", value: "meetings") {
+                MeetingSettings()
+            }
+            Tab("Projects", systemImage: "folder", value: "projects") {
+                ProjectSettings()
+            }
+        }
+        .frame(width: 540)
+        .preferredColorScheme(.dark)
+        .modifier(WindowAppearance())
+    }
+}
+
+struct AppearanceSettings: View {
+    @AppStorage(SettingKey.backgroundOpacity) private var opacity = SettingDefault.backgroundOpacity
+    @AppStorage(SettingKey.blurRadius) private var blur = SettingDefault.blurRadius
+    @AppStorage(SettingKey.showUsage) private var showUsage = SettingDefault.showUsage
+
+    var body: some View {
+        Form {
+            Section {
+                SettingSlider(title: "Background opacity",
+                              explainer: "How much of your desktop shows through. 100% is solid black.",
+                              value: $opacity, range: SettingDefault.opacityRange,
+                              lowIcon: "circle.dotted", highIcon: "circle.fill",
+                              valueText: "\(Int((opacity * 100).rounded()))%")
+                SettingSlider(title: "Background blur",
+                              explainer: opacity >= 1
+                                ? "Blur shows once the background opacity is below 100%."
+                                : "Softens whatever shows through behind the window.",
+                              value: $blur, range: SettingDefault.blurRange,
+                              lowIcon: "drop", highIcon: "drop.fill",
+                              valueText: blur < 0.5 ? "Off" : "\(Int(blur.rounded()))")
+            } header: {
+                Text("Window")
+            } footer: {
+                Text("Changes show right away and are kept when you reopen HiveMinds.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                SettingRow(explainer: "Your Claude plan's 5-hour and weekly limits, read from Claude Code as your agents work. Codex agents aren't counted.") {
+                    Toggle("Show plan usage", isOn: $showUsage)
+                }
+            } header: {
+                Text("Sidebar")
+            } footer: {
+                // In the footer, not its own section, so it doesn't sit in an otherwise empty card.
+                HStack {
+                    Spacer()
+                    Button("Restore Defaults") {
+                        opacity = SettingDefault.backgroundOpacity
+                        blur = SettingDefault.blurRadius
+                        showUsage = SettingDefault.showUsage
+                    }
+                    .disabled(opacity == SettingDefault.backgroundOpacity && blur == SettingDefault.blurRadius
+                              && showUsage == SettingDefault.showUsage)
+                }
+                .padding(.top, 8)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// What a new agent starts with. The New Agent sheet opens with these, and Options there changes them for one agent.
+struct AgentSettings: View {
+    @Environment(AppStore.self) private var store
+    @AppStorage(SettingKey.defaultProvider) private var provider = SettingDefault.defaultProvider
+    @AppStorage(SettingKey.defaultModel) private var model = SettingDefault.defaultModel
+    @AppStorage(SettingKey.defaultEffort) private var effort = SettingDefault.defaultEffort
+    @AppStorage(SettingKey.ownBranch) private var ownBranch = SettingDefault.ownBranch
+    @AppStorage(SettingKey.defaultAccess) private var access = SettingDefault.defaultAccess
+    @AppStorage(SettingKey.defaultRole) private var role = SettingDefault.defaultRole
+    @AppStorage(SettingKey.autoTitles) private var autoTitles = SettingDefault.autoTitles
+
+    private var isDefault: Bool {
+        provider == SettingDefault.defaultProvider && model == SettingDefault.defaultModel
+            && effort == SettingDefault.defaultEffort && ownBranch == SettingDefault.ownBranch && access == SettingDefault.defaultAccess && role == SettingDefault.defaultRole
+            && autoTitles == SettingDefault.autoTitles
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                if store.tools.providers.count > 1 {
+                    SettingRow(explainer: "The command-line tool new agents run in.") {
+                        Picker("Runs on", selection: $provider) {
+                            ForEach(store.tools.providers) { Text($0.label).tag($0.rawValue) }
+                        }
+                    }
+                }
+                SettingRow(explainer: "Default lets Claude Code choose. Opus is the most capable, Haiku the fastest.") {
+                    Picker("Claude Code model", selection: $model) {
+                        ForEach(Provider.claude.models, id: \.self) { Text($0 == "default" ? "Default" : $0.capitalized).tag($0) }
+                    }
+                }
+                SettingRow(explainer: "How hard agents think before answering. Higher is slower and uses more of your plan. Works for Claude Code and Codex; Codex tops out at Extra high, so Max gives it that.") {
+                    Picker("Effort", selection: $effort) {
+                        ForEach(Effort.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                    // An earlier build could save "default", which isn't a level any more.
+                    .onAppear { if Effort(rawValue: effort) == nil { effort = SettingDefault.defaultEffort } }
+                }
+                SettingRow(explainer: (Access(rawValue: access) ?? .auto).explainer) {
+                    Picker("Access", selection: $access) {
+                        ForEach(Access.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                }
+                SettingRow(explainer: "Each agent works on its own git branch, so you can review its changes as a pull request. Only applies in git projects.") {
+                    Toggle("Own branch", isOn: $ownBranch)
+                }
+                SettingRow(explainer: "Extra instructions every new Claude Code agent gets. You can still change them per agent.") {
+                    TextField("Role", text: $role, prompt: Text("e.g. careful reviewer who writes tests first"), axis: .vertical)
+                        .lineLimit(1...4)
+                }
+            } header: {
+                Text("New agents")
+            } footer: {
+                Text("These only change what new agents start with. Agents you already have keep their settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                SettingRow(explainer: "Claude Haiku writes a short title from each chat's first request. Uses a little of your Claude plan. When off, the title is the start of the request.") {
+                    Toggle("Name chats automatically", isOn: $autoTitles)
+                }
+            } header: {
+                Text("Chats")
+            } footer: {
+                HStack {
+                    Spacer()
+                    Button("Restore Defaults") {
+                        provider = SettingDefault.defaultProvider
+                        model = SettingDefault.defaultModel
+                        effort = SettingDefault.defaultEffort
+                        ownBranch = SettingDefault.ownBranch
+                        access = SettingDefault.defaultAccess
+                        role = SettingDefault.defaultRole
+                        autoTitles = SettingDefault.autoTitles
+                    }
+                    .disabled(isDefault)
+                }
+                .padding(.top, 8)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// What a new meeting starts with. The New Meeting sheet opens with these.
+struct MeetingSettings: View {
+    @AppStorage(SettingKey.meetingModel) private var model = SettingDefault.meetingModel
+    @AppStorage(SettingKey.meetingSeats) private var seats = SettingDefault.meetingSeats
+    @AppStorage(SettingKey.meetingRounds) private var rounds = SettingDefault.meetingRounds
+    @AppStorage(SettingKey.meetingAcceptEdits) private var acceptEdits = SettingDefault.meetingAcceptEdits
+    @AppStorage(SettingKey.meetingCommit) private var commit = SettingDefault.meetingCommit
+
+    private var isDefault: Bool {
+        model == SettingDefault.meetingModel && seats == SettingDefault.meetingSeats && rounds == SettingDefault.meetingRounds
+            && acceptEdits == SettingDefault.meetingAcceptEdits && commit == SettingDefault.meetingCommit
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                SettingRow(explainer: "The model every seat at the table uses. Meetings run several sessions at once, so they use more of your plan.") {
+                    Picker("Model", selection: $model) {
+                        ForEach(Provider.claude.models, id: \.self) { Text($0 == "default" ? "Default" : $0.capitalized).tag($0) }
+                    }
+                }
+                SettingRow(explainer: "How many agents sit at the table. Red / blue always has two.") {
+                    Stepper("Agents: \(seats)", value: $seats, in: 2...5)
+                }
+                SettingRow(explainer: "Rounds of critique, review or attack, for the formats that have them.") {
+                    Stepper("Rounds: \(rounds)", value: $rounds, in: 1...4)
+                }
+            } header: {
+                Text("New meetings")
+            }
+
+            Section {
+                SettingRow(explainer: "Seats write their notes and code without stopping to ask each time. They still ask before running commands.") {
+                    Toggle("Let agents edit files without asking", isOn: $acceptEdits)
+                }
+                SettingRow(explainer: "Meetings in a git project run on their own branch. When one finishes, its outcome and changes are committed there. Nothing is pushed.") {
+                    Toggle("Commit the outcome", isOn: $commit)
+                }
+            } header: {
+                Text("While they run")
+            } footer: {
+                HStack {
+                    Spacer()
+                    Button("Restore Defaults") {
+                        model = SettingDefault.meetingModel
+                        seats = SettingDefault.meetingSeats
+                        rounds = SettingDefault.meetingRounds
+                        acceptEdits = SettingDefault.meetingAcceptEdits
+                        commit = SettingDefault.meetingCommit
+                    }
+                    .disabled(isDefault)
+                }
+                .padding(.top, 8)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Where projects downloaded from GitHub are put.
+struct ProjectSettings: View {
+    @AppStorage(SettingKey.projectsFolder) private var folder = SettingDefault.projectsFolder
+
+    var body: some View {
+        Form {
+            Section {
+                SettingRow(explainer: folder.isEmpty
+                           ? "Not chosen yet. HiveMinds asks the first time you add a project from GitHub."
+                           : "Each project you add from GitHub is downloaded into its own folder here. Projects already added stay where they are.") {
+                    HStack {
+                        Text("Projects folder")
+                        Spacer()
+                        Text(folder.isEmpty ? "Ask when needed" : (folder as NSString).abbreviatingWithTildeInPath)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button(folder.isEmpty ? "Choose…" : "Change…") {
+                            if let chosen = ProjectFolder.choose() { folder = chosen }
+                        }
+                    }
+                }
+            } header: {
+                Text("Downloads from GitHub")
+            } footer: {
+                HStack {
+                    Spacer()
+                    if !folder.isEmpty {
+                        Button("Show in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) }
+                    }
+                    Button("Ask Next Time") { folder = SettingDefault.projectsFolder }
+                        .disabled(folder.isEmpty)
+                }
+                .padding(.top, 8)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A control with a one-line explanation below it.
+struct SettingRow<Control: View>: View {
+    let explainer: String
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            control
+            Text(explainer)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// A labelled slider with its current value on the right and a one-line explanation below.
+struct SettingSlider: View {
+    let title: String
+    let explainer: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let lowIcon: String
+    let highIcon: String
+    let valueText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(valueText)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: range) {
+                Text(title)
+            } minimumValueLabel: {
+                Image(systemName: lowIcon).foregroundStyle(.secondary)
+            } maximumValueLabel: {
+                Image(systemName: highIcon).foregroundStyle(.secondary)
+            }
+            .labelsHidden()
+            Text(explainer)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+}

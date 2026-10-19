@@ -1,0 +1,6 @@
+.build/
+build/
+*.app
+.swiftpm/
+.agent-office/
+.DS_Store
