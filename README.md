@@ -26,7 +26,7 @@ HiveMinds is a personal remake of Agent Office with a minimal, OLED-black Liquid
 
 ## Install
 
-Download `HiveMinds-<version>.dmg`, open it and drag HiveMinds into Applications.
+Download `HiveMinds-<version>.dmg` from the [latest release](https://github.com/eptkod/HiveMinds/releases/latest), open it and drag HiveMinds into Applications.
 
 The app isn't notarised, so the first time macOS may block it. Right-click HiveMinds in Applications and choose **Open**, or run:
 
