@@ -103,7 +103,8 @@ struct WorkspaceTabBar: View {
 
             // The project's total, while the Canvas is open. Each agent's own tab shows its own.
             if !isAgentOrBrowser {
-                TokenBadge(agents: store.agents.filter { $0.projectID == project.id }.map(\.id), scope: "every agent in this project")
+                TokenBadge(agents: store.agents.filter { $0.projectID == project.id }.map(\.id), project: project,
+                           scope: "every agent in this project, deleted ones included,")
                 Button {
                     withAnimation(Motion.bouncy) {
                         store.pinCanvas(in: project, [:])

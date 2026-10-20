@@ -84,14 +84,14 @@ struct EmptyOverview: View {
     var body: some View {
         Card(padding: 28) {
             VStack(alignment: .leading, spacing: 14) {
-                Text(store.projects.isEmpty ? "Start with a project" : "No agents yet")
+                Text(store.shownProjects.isEmpty ? "Start with a project" : "No agents yet")
                     .font(.title3.weight(.semibold))
-                Text(store.projects.isEmpty
+                Text(store.shownProjects.isEmpty
                      ? "A project is a folder your agents work in, usually one of your GitHub repositories."
                      : "An agent is a Claude Code chat that works in your project and tells you when it needs you.")
                     .foregroundStyle(.secondary)
                 HStack(spacing: 10) {
-                    if store.projects.isEmpty {
+                    if store.shownProjects.isEmpty {
                         Button("Add from GitHub") { store.mode = .github }
                             .buttonStyle(.glassProminent)
                         Button("Add a Folder…") { store.chooseLocalFolder() }

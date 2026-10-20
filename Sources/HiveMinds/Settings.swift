@@ -770,10 +770,44 @@ struct ProjectSettings: View {
                 }
                 .padding(.top, 8)
             }
+            HiddenProjects()
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Projects you hid from the sidebar, with a button to bring each one back.
+private struct HiddenProjects: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        Section {
+            if store.hiddenProjects.isEmpty {
+                Text("None. When you finish with a project for now, pick Hide Project from the … button next to its name in the sidebar.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(store.hiddenProjects) { project in
+                let count = store.agents.filter { $0.projectID == project.id }.count
+                SettingRow(explainer: (project.path as NSString).abbreviatingWithTildeInPath
+                           + (count > 0 ? " · \(count) \(count == 1 ? "agent" : "agents") waiting" : "")) {
+                    HStack {
+                        Text(project.name)
+                        Spacer()
+                        Button("Show") { store.showProject(project) }
+                    }
+                }
+            }
+        } header: {
+            Text("Hidden projects")
+        } footer: {
+            Text("A hidden project uses no memory or processor time: its agents are stopped, but keep their chats and pick up where they left off when you show it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+        }
     }
 }
 

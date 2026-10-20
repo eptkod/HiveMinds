@@ -92,10 +92,16 @@ struct OverviewStats: View {
         return layout { content() }.fixedSize(horizontal: false, vertical: true)
     }
 
+    /// Live and deleted agents together, so removing a project, or adding it again, doesn't change the totals.
     private var projectRows: [(String, Int)] {
-        var by: [UUID: Int] = [:]
-        for a in store.agents { by[a.projectID, default: 0] += store.spend.tokens(for: [a.id]).total }
-        return by.compactMap { id, n in n > 0 ? store.project(id).map { ($0.name, n) } : nil }.sorted { $0.1 > $1.1 }
+        let spend = store.spend
+        var by: [String: Int] = [:]
+        for p in store.projects {
+            by[p.name, default: 0] += spend.tokens(for: store.agents.filter { $0.projectID == p.id }.map(\.id)).total
+                + spend.removed(in: p).tokens.total
+        }
+        for r in spend.removed where !store.projects.contains(where: r.isFor) { by[r.name, default: 0] += r.tokens.total }
+        return by.filter { $0.value > 0 }.map { ($0.key, $0.value) }.sorted { $0.1 > $1.1 }
     }
 }
 
@@ -481,7 +487,7 @@ private struct TokenMix: View {
     @Environment(AppStore.self) private var store
 
     var body: some View {
-        let t = store.spend.tokens(for: store.agents.map(\.id))
+        let t = store.spend.tokens(for: store.agents.map(\.id)) + store.spend.removedTokens
         let parts: [(String, Int, Color)] = [
             ("Read from cache", t.cacheRead, .white.opacity(0.32)),
             ("Written to cache", t.cacheWrite, .white.opacity(0.55)),

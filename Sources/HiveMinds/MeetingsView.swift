@@ -34,9 +34,9 @@ struct MeetingsView: View {
 struct MeetingListView: View {
     @Environment(AppStore.self) private var store
 
-    private var sorted: [Meeting] { store.meetings.sorted { $0.createdAt > $1.createdAt } }
+    private var sorted: [Meeting] { store.shownMeetings.sorted { $0.createdAt > $1.createdAt } }
     private var finished: [Meeting] {
-        store.meetings.filter { $0.status == .finished }
+        store.shownMeetings.filter { $0.status == .finished }
             .sorted { ($0.finishedAt ?? $0.createdAt) > ($1.finishedAt ?? $1.createdAt) }
     }
 
@@ -61,7 +61,7 @@ struct MeetingListView: View {
                     Button { store.beginNewMeeting() } label: { Label("New Meeting", systemImage: "plus") }
                         .buttonStyle(.glassProminent)
                         .controlSize(.large)
-                        .disabled(store.projects.isEmpty)
+                        .disabled(store.shownProjects.isEmpty)
                 }
 
                 if !sorted.isEmpty {
@@ -90,12 +90,12 @@ struct MeetingListView: View {
                                 .contentShape(RoundedRectangle(cornerRadius: 16))
                             }
                             .buttonStyle(.squish)
-                            .disabled(store.projects.isEmpty)
+                            .disabled(store.shownProjects.isEmpty)
                             .help("Start a \(p.name) meeting")
                         }
                     }
                 }
-                if store.projects.isEmpty {
+                if store.shownProjects.isEmpty {
                     Text("Meetings work inside a project. Add one from the sidebar first.")
                         .foregroundStyle(.secondary)
                 }
@@ -299,7 +299,7 @@ struct NewMeetingSheet: View {
                 Spacer()
                 if !projectGiven {
                     Picker("Project", selection: $projectID) {
-                        ForEach(store.projects) { Text($0.name).tag(Optional($0.id)) }
+                        ForEach(store.shownProjects) { Text($0.name).tag(Optional($0.id)) }
                     }
                     .labelsHidden()
                     .fixedSize()
@@ -381,9 +381,9 @@ struct NewMeetingSheet: View {
         .padding(24)
         .frame(width: 540)
         .onAppear {
-            let inferred = store.currentProjectID ?? (store.projects.count == 1 ? store.projects.first?.id : nil)
+            let inferred = store.currentProjectID ?? (store.shownProjects.count == 1 ? store.shownProjects.first?.id : nil)
             projectGiven = inferred != nil
-            projectID = inferred ?? store.projects.first?.id
+            projectID = inferred ?? store.shownProjects.first?.id
             pattern = store.newMeetingPattern ?? .debate
             seats = MeetingDefaults.seats
             rounds = MeetingDefaults.rounds

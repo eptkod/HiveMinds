@@ -120,7 +120,7 @@ struct CommandPalette: View {
             out.append(PaletteItem(id: "a.waiting", title: "Go to Agent Who Needs You", subtitle: a.title, icon: "bell.badge") { store.jumpToWaiting() })
         }
         out.append(PaletteItem(id: "a.agent", title: "New Agent", subtitle: "⌘N", icon: "plus") { store.beginNewAgent(in: nil) })
-        if !store.projects.isEmpty {
+        if !store.shownProjects.isEmpty {
             out.append(PaletteItem(id: "a.meeting", title: "New Meeting", subtitle: "⇧⌘N", icon: "bubble.left.and.bubble.right") { store.beginNewMeeting() })
         }
         if let current {
@@ -141,7 +141,7 @@ struct CommandPalette: View {
         out.append(PaletteItem(id: "a.settings", title: "Settings", subtitle: "⌘,", icon: "gearshape") { openSettings() })
 
         // Places, the open project's first.
-        let projects = store.projects.sorted { ($0.id == current ? 0 : 1) < ($1.id == current ? 0 : 1) }
+        let projects = store.shownProjects.sorted { ($0.id == current ? 0 : 1) < ($1.id == current ? 0 : 1) }
         for p in projects {
             out.append(PaletteItem(id: "p.\(p.id)", title: p.name, subtitle: "Canvas", icon: "folder") {
                 store.mode = .agents

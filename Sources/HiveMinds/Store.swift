@@ -30,6 +30,8 @@ final class AppStore {
     var showingNewAgent = false
     var newAgentProject: UUID?
     var pendingDelete: Agent?
+    /// A project with agents still at work, waiting for you to confirm hiding it.
+    var pendingHide: Project?
     var tools = Tools()
     var toolsChecked = false
     var errorMessage: String?
@@ -89,7 +91,9 @@ final class AppStore {
         }
         writeHooksFile()
         load()
-        for a in agents where a.provider == .claude { spend.watch(a.id) }
+        for a in agents where a.provider == .claude {
+            if isHidden(a) { spend.park(a.id) } else { spend.watch(a.id) }
+        }
         spend.onCostChange = { [weak self] id, old, new in self?.checkCost(id, old, new) }
         Terminals.shared.store = self
     }
@@ -211,12 +215,20 @@ final class AppStore {
     func project(_ id: UUID) -> Project? { projects.first { $0.id == id } }
     /// A project's own agents. Agents sitting in a meeting belong to the meeting room instead.
     func agents(in project: Project) -> [Agent] { agents.filter { $0.projectID == project.id && $0.meetingID == nil } }
-    var workspaceAgents: [Agent] { agents.filter { $0.meetingID == nil } }
+    var workspaceAgents: [Agent] { agents.filter { $0.meetingID == nil && !isHidden($0) } }
     func state(_ id: UUID) -> LiveState { live[id] ?? LiveState() }
 
-    var waitingAgents: [Agent] { agents.filter { state($0.id).status == .needsYou } }
+    /// Projects in the sidebar, and the ones tucked away in Settings > Projects.
+    var shownProjects: [Project] { projects.filter { !$0.isHidden } }
+    var hiddenProjects: [Project] { projects.filter(\.isHidden) }
+    func isHidden(_ agent: Agent) -> Bool { project(agent.projectID)?.isHidden == true }
+    var shownMeetings: [Meeting] { meetings.filter { project($0.projectID)?.isHidden != true } }
+
+    var waitingAgents: [Agent] { agents.filter { state($0.id).status == .needsYou && !isHidden($0) } }
 
     func select(_ id: UUID) {
+        // Opening an agent from History or the palette brings its project back.
+        if let a = agent(id), let p = project(a.projectID), p.isHidden { showProject(p) }
         if let meetingID = agent(id)?.meetingID {
             openMeeting(meetingID, tab: .seat(id))
             return
@@ -314,7 +326,13 @@ final class AppStore {
     func removeProject(_ project: Project) {
         let gone = agents.filter { $0.projectID == project.id }
         remember(gone)
-        for a in gone { Terminals.shared.stop(a.id); spend.forget(a.id) }
+        for a in gone {
+            Terminals.shared.stop(a.id)
+            spend.forget(a.id, from: project)
+            live.removeValue(forKey: a.id)
+            try? FileManager.default.removeItem(at: eventsFile(for: a.id))
+            try? FileManager.default.removeItem(at: statusFile(for: a.id))
+        }
         agents.removeAll { $0.projectID == project.id }
         meetings.removeAll { $0.projectID == project.id }
         if let id = meetingSelection, meeting(id) == nil { meetingSelection = nil }
@@ -330,11 +348,65 @@ final class AppStore {
         save()
     }
 
+    /// Hides a project, or asks first if any of its agents or meetings are still at work, since hiding stops them.
+    func requestHide(_ project: Project) {
+        let ids = agents.filter { $0.projectID == project.id }.map(\.id)
+        let busy = ids.contains { [.working, .starting].contains(state($0).status) }
+            || meetings.contains { $0.projectID == project.id && $0.status == .running }
+        if busy { pendingHide = project } else { hideProject(project) }
+    }
+
+    /// Takes a project out of the sidebar and lets go of everything it was using: its agents' processes,
+    /// file watches and event logs, and its browser and shell tabs. What's kept is the agents' settings and
+    /// chats (Claude Code saves those itself), so each picks up where it left off when the project is shown.
+    func hideProject(_ project: Project) {
+        pendingHide = nil
+        // Leave its workspace first, so no terminal on screen starts its agent again.
+        if currentProjectID == project.id { selection = .overview }
+        if let id = meetingSelection, meeting(id)?.projectID == project.id { meetingSelection = nil }
+        for m in meetings where m.projectID == project.id && m.status == .running { pauseMeeting(m.id) }
+        for a in agents where a.projectID == project.id {
+            Terminals.shared.stop(a.id)
+            pendingInput[a.id] = nil
+            if a.provider == .claude { spend.park(a.id) }
+            live[a.id] = LiveState()
+            // Started empty every time the agent starts, so nothing is lost.
+            try? FileManager.default.removeItem(at: eventsFile(for: a.id))
+        }
+        for t in browserTabs(in: project) { Browsers.close(t.id) }
+        for t in shellTabs(in: project) { Shells.shared.close(t.id) }
+        setHidden(project.id, true)
+        notice = "\(project.name) is hidden. Show it again from Settings > Projects."
+    }
+
+    /// Puts a hidden project back in the sidebar. Its agents start when you open them, as after a relaunch.
+    func showProject(_ project: Project) {
+        for a in agents where a.projectID == project.id && a.provider == .claude { spend.watch(a.id) }
+        setHidden(project.id, false)
+    }
+
+    private func setHidden(_ id: UUID, _ hidden: Bool) {
+        guard let i = projects.firstIndex(where: { $0.id == id }) else { return }
+        projects[i].hidden = hidden ? true : nil
+        save()
+        updateBadge()
+    }
+
+    /// Moves a project into another's place in the sidebar, so dragging up lands it above that project
+    /// and dragging down lands it below.
+    func moveProject(_ id: UUID, to targetID: UUID) {
+        guard id != targetID,
+              let from = projects.firstIndex(where: { $0.id == id }),
+              let to = projects.firstIndex(where: { $0.id == targetID }) else { return }
+        projects.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        save()
+    }
+
     // MARK: Agents
 
     /// Opens the New Agent sheet. With a project (or one to infer from what's selected) the sheet doesn't ask for one.
     func beginNewAgent(in projectID: UUID?) {
-        newAgentProject = projectID ?? currentProjectID ?? (projects.count == 1 ? projects.first?.id : nil)
+        newAgentProject = projectID ?? currentProjectID ?? (shownProjects.count == 1 ? shownProjects.first?.id : nil)
         showingNewAgent = true
     }
 
@@ -474,7 +546,7 @@ final class AppStore {
         remember([agent])
         agents.removeAll { $0.id == agent.id }
         live.removeValue(forKey: agent.id)
-        spend.forget(agent.id)
+        spend.forget(agent.id, from: project(agent.projectID))
         try? FileManager.default.removeItem(at: eventsFile(for: agent.id))
         try? FileManager.default.removeItem(at: statusFile(for: agent.id))
         if selection == .agent(agent.id) { selection = .project(agent.projectID) }

@@ -17,6 +17,7 @@ HiveMinds is a personal remake of Agent Office with a minimal, OLED-black Liquid
 ## Features
 
 - **Projects and agents:** run many agents across many projects, each with a short title, a model, an effort level and an access level (Auto review, Manual review or Unrestricted).
+- **Tidy project list:** drag projects in the sidebar to reorder them, and hide ones you're done with (Settings > Projects brings them back). Hidden projects' agents are stopped but keep their chats.
 - **Canvas:** every agent terminal, browser tab and shell in a project, side by side, usable in place. Drag tiles by their title bar to rearrange them, and by any edge or corner to make one bigger (it snaps to a grid and the rest fill the space left).
 - **Own branches and pull requests:** an agent can work in its own git worktree. HiveMinds drafts the pull request and opens it with `gh` once you confirm.
 - **Review and jump around:** right-click an agent to see what it changed (a read-only diff), open its folder in your editor, copy its branch, or restart it with a different access level or model. Press ⌘P to jump to any project, agent, tab or meeting.
@@ -65,6 +66,7 @@ For development, `scripts/build-app.sh debug` builds a debug app. The build uses
 - Agents on their own branch: `<project>/.hiveminds/worktrees/<title-slug>-<id>`.
 - Pull requests: an agent on its own branch has a pull-request button in its header. It drafts a title and description, then pushes the branch and opens the PR with `gh` only when you confirm. PRs an agent opens itself are picked up after its turn ends.
 - Meetings (the Meetings switch in the toolbar, or Shift+Cmd+N): each runs in its own worktree, `<project>/.hiveminds/worktrees/meeting-<topic>-<id>` on branch `hive/meeting-…`. Turn notes go in `.hiveminds/meetings/<date>-<topic>/` inside it, and the outcome in `meetings/<date>-<topic>.md`, committed on the meeting's branch. When a meeting finishes, its outcome (a review panel's combined review too) is also saved in the project's own folder at `<project>/meetings/<date>-<topic>.md`; the folder is set in Settings > Meetings. Meeting defaults are in Settings > Meetings.
+- Hidden projects: a project's … menu in the sidebar has Hide Project. It leaves the sidebar, its agents are stopped (they keep their chats), and it's listed in Settings > Projects > Hidden projects with a Show button.
 - Agent history (sidebar > History, ⌘Y): every agent, including deleted ones. Deleted agents are kept in `~/Library/Application Support/HiveMinds/agent-history.json`, up to a count and number of days set in Settings > Agents > History (default 100 agents, 7 days).
 - Keep awake (optional, off by default): Settings > Agents > Sleep. While any agent is working, the display won't turn off and the Mac won't sleep. Check it with `pmset -g assertions | grep HiveMinds`.
 - Usage history of deleted agents, kept for the Overview charts: `~/Library/Application Support/HiveMinds/history.json`.

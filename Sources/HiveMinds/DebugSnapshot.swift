@@ -26,6 +26,10 @@ enum DebugSnapshot {
             runTestAsk(store: store, path: path)
             return
         }
+        if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_HIDE"] {
+            runTestHide(store: store, path: path)
+            return
+        }
         if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_ISSUE"] {
             runTestIssue(store: store, path: path)
             return
@@ -43,6 +47,7 @@ enum DebugSnapshot {
         steps.append(("settings", { store.showingNewAgent = false; if let menu = NSApp.mainMenu?.items.first?.submenu,
                let i = menu.items.firstIndex(where: { $0.keyEquivalent == "," }) { menu.performActionForItem(at: i) } }))
         steps.append(("settings-agents", { UserDefaults.standard.set("agents", forKey: SettingKey.settingsTab) }))
+        steps.append(("settings-projects", { UserDefaults.standard.set("projects", forKey: SettingKey.settingsTab) }))
         // Shows the split-model rows, then puts the setting back as it was.
         let split = UserDefaults.standard.object(forKey: SettingKey.meetingSplitModels)
         steps.append(("settings-meetings", { UserDefaults.standard.set(true, forKey: SettingKey.meetingSplitModels)
@@ -266,6 +271,45 @@ enum DebugSnapshot {
             let git = store.tools.git ?? "/usr/bin/git"
             let last = await Shell.run(git, ["log", "-1", "--format=%B"], cwd: a.cwd)
             log("ISSUE-RESULT file=\(FileManager.default.fileExists(atPath: file)) status=\(store.state(a.id).status.rawValue) commit=\(last.out.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " | "))")
+            await store.deleteAgent(a)
+            exit(0)
+        }
+    }
+
+    /// `HIVEMINDS_TEST_HIDE=/path/to/repo` starts a Haiku agent there, hides the project, checks everything it
+    /// used was let go, then shows it again and checks the agent resumes the same chat. Use a scratch support dir.
+    private static func runTestHide(store: AppStore, path: String) {
+        let project = store.addProject(path: path, repo: nil)
+        func log(_ s: String) { print(s); fflush(stdout) }
+        Task {
+            do {
+                try await store.createAgent(projectID: project.id, provider: .claude, model: "haiku", access: .unrestricted, role: "",
+                                            task: "Reply with only the word ok.", ownBranch: false, open: false)
+            } catch { log("HIDE-FAIL \(error.localizedDescription)"); exit(1) }
+            guard let a = store.agents.last else { exit(1) }
+            @MainActor func waitFor(_ done: () -> Bool) async {
+                for _ in 0..<45 {
+                    if store.state(a.id).status == .starting {
+                        Terminals.shared.sendKeys(a.id, "\u{1b}[B")
+                        try? await Task.sleep(for: .milliseconds(300))
+                        Terminals.shared.sendKeys(a.id, "\r")
+                    }
+                    if done() { return }
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
+            await waitFor { store.state(a.id).status == .done }
+            let tokens = store.spend.tokens(for: [a.id]).total
+            log("HIDE-BEFORE status=\(store.state(a.id).status.rawValue) running=\(Terminals.shared.isRunning(a.id)) tokens=\(tokens)")
+            store.requestHide(project)
+            let events = FileManager.default.fileExists(atPath: store.eventsFile(for: a.id).path)
+            log("HIDE-HIDDEN hidden=\(store.project(project.id)?.isHidden == true) running=\(Terminals.shared.isRunning(a.id)) events=\(events) shown=\(store.shownProjects.count) overview=\(store.workspaceAgents.count) agentKept=\(store.agent(a.id) != nil) tokensKept=\(store.spend.tokens(for: [a.id]).total == tokens)")
+            let session = a.sessionID
+            store.showProject(project)
+            if let agent = store.agent(a.id) { _ = Terminals.shared.view(for: agent) }
+            await waitFor { store.state(a.id).status == .idle }
+            try? await Task.sleep(for: .seconds(6))
+            log("HIDE-SHOWN hidden=\(store.project(project.id)?.isHidden == true) status=\(store.state(a.id).status.rawValue) running=\(Terminals.shared.isRunning(a.id)) sameChat=\(store.agent(a.id)?.sessionID == session)")
             await store.deleteAgent(a)
             exit(0)
         }

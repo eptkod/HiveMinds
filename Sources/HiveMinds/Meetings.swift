@@ -743,7 +743,7 @@ extension AppStore {
             pendingInput[seat.agentID] = nil
             live.removeValue(forKey: seat.agentID)
             stopped.remove(seat.agentID)
-            spend.forget(seat.agentID)
+            spend.forget(seat.agentID, from: project(m.projectID))
             try? FileManager.default.removeItem(at: eventsFile(for: seat.agentID))
             try? FileManager.default.removeItem(at: statusFile(for: seat.agentID))
         }

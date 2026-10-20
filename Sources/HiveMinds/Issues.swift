@@ -104,7 +104,7 @@ extension GitHubModel {
 
 extension AppStore {
     /// Projects that are on GitHub, so they can have issues.
-    var githubProjects: [Project] { projects.filter { $0.repo != nil } }
+    var githubProjects: [Project] { shownProjects.filter { $0.repo != nil } }
 
     /// Agents started on this issue, newest first.
     func agents(on issue: GitHubModel.Issue) -> [Agent] {

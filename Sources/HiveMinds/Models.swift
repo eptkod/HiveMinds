@@ -128,7 +128,10 @@ struct Project: Codable, Identifiable, Hashable {
     var path: String
     /// owner/name on GitHub, when known.
     var repo: String?
+    /// Tucked away in Settings > Projects. Its agents are stopped but keep their chats for when it's shown again.
+    var hidden: Bool?
 
+    var isHidden: Bool { hidden == true }
     var isGitRepo: Bool { FileManager.default.fileExists(atPath: path + "/.git") }
 }
 

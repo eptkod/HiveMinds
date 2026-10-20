@@ -23,7 +23,7 @@ struct HiveMindsApp: App {
                     .keyboardShortcut("n")
                 Button("New Meeting…") { store.beginNewMeeting() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
-                    .disabled(store.projects.isEmpty)
+                    .disabled(store.shownProjects.isEmpty)
                 Button("New Browser Tab") { if let id = store.currentProjectID { store.newBrowserTab(in: id) } }
                     .keyboardShortcut("t")
                     .disabled(store.currentProjectID == nil)

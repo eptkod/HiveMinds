@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @Environment(AppStore.self) private var store
@@ -7,6 +8,8 @@ struct SidebarView: View {
     /// its rows lazily, so they read this when they're built instead of deciding on their own.
     @State private var dropping: UUID?
     @State private var dropped = 0
+    /// The project being dragged to a new place in the list.
+    @State private var draggingProject: UUID?
 
     var body: some View {
         @Bindable var store = store
@@ -16,12 +19,13 @@ struct SidebarView: View {
             Label("History", systemImage: "clock.arrow.circlepath")
                 .tag(SidebarItem.history)
 
-            ForEach(store.projects) { project in
+            ForEach(store.shownProjects) { project in
                 Section {
                     // A project's agents only show while its workspace is open, to keep the sidebar short.
                     let open = store.currentProjectID == project.id
                     CanvasRow(agents: store.agents(in: project), expanded: open)
                         .tag(SidebarItem.project(project.id))
+                        .onDrop(of: [.text], delegate: ProjectDrop(target: project.id, dragging: $draggingProject, store: store))
                     if open {
                         let agents = store.agents(in: project)
                         ForEach(Array(agents.enumerated()), id: \.element.id) { i, agent in
@@ -50,6 +54,7 @@ struct SidebarView: View {
                                 Link("Open on GitHub", destination: url)
                             }
                             Divider()
+                            Button("Hide Project") { store.requestHide(project) }
                             Button("Remove from HiveMinds", role: .destructive) { store.removeProject(project) }
                         } label: {
                             Image(systemName: "ellipsis")
@@ -61,6 +66,17 @@ struct SidebarView: View {
                         .padding(.trailing, 8)
                         .help("Project options. Removing it from HiveMinds doesn't delete any files.")
                     }
+                    .contentShape(Rectangle())
+                    .onDrag {
+                        draggingProject = project.id
+                        return NSItemProvider(object: project.id.uuidString as NSString)
+                    } preview: {
+                        Text(project.name)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Theme.surface, in: Capsule())
+                    }
+                    .onDrop(of: [.text], delegate: ProjectDrop(target: project.id, dragging: $draggingProject, store: store))
                 }
             }
         }
@@ -118,6 +134,28 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+}
+
+/// Drag a project's name onto another project to move it there. The list reorders as you pass over
+/// projects, so you see where it will land before letting go.
+struct ProjectDrop: DropDelegate {
+    let target: UUID
+    @Binding var dragging: UUID?
+    let store: AppStore
+
+    func validateDrop(info: DropInfo) -> Bool { dragging != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging, dragging != target else { return }
+        withAnimation(.snappy(duration: 0.2)) { store.moveProject(dragging, to: target) }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
     }
 }
 

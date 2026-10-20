@@ -40,7 +40,7 @@ struct RootView: View {
                         Label("New Meeting", systemImage: "plus")
                     }
                     .help("New Meeting (⇧⌘N)")
-                    .disabled(store.projects.isEmpty)
+                    .disabled(store.shownProjects.isEmpty)
                 } else {
                     Button { store.beginNewAgent(in: nil) } label: {
                         Label("New Agent", systemImage: "plus")
@@ -82,6 +82,13 @@ struct RootView: View {
             Text(agent.branch != nil
                  ? "Its session stops. Its branch \(agent.branch!) and any commits on it are kept. Its folder is removed only if nothing is left uncommitted."
                  : "Its session stops. Files in the project are not touched.")
+        }
+        .confirmationDialog("Hide \(store.pendingHide.map { "\"\($0.name)\"" } ?? "project")?",
+                            isPresented: Binding(get: { store.pendingHide != nil }, set: { if !$0 { store.pendingHide = nil } }),
+                            presenting: store.pendingHide) { project in
+            Button("Hide Project") { store.hideProject(project) }
+        } message: { _ in
+            Text("Some of its agents are still working. Hiding stops them, and pauses any meeting. Their chats are kept, so they carry on when you show the project again from Settings > Projects.")
         }
         .alert("Something went wrong",
                isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {

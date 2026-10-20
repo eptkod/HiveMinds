@@ -26,6 +26,15 @@ final class SpendModel {
     private(set) var histories: [UUID: UsageHistory] = [:]
     /// What deleted agents used, so the Overview's history doesn't lose it.
     private(set) var archived = UsageHistory()
+    /// What deleted agents used, by project, so the Overview's token mix and per-project numbers don't lose it.
+    private(set) var removed: [ProjectTotal] = []
+
+    /// Every deleted agent's tokens.
+    var removedTokens: TokenCount { removed.reduce(TokenCount()) { $0 + $1.tokens } }
+    /// What a project's deleted agents used, even from before it was removed and added again.
+    func removed(in project: Project) -> (tokens: TokenCount, cost: Double) {
+        removed.filter { $0.isFor(project) }.reduce((TokenCount(), 0)) { ($0.0 + $1.tokens, $0.1 + $1.cost) }
+    }
 
     /// Every agent's history, deleted ones included.
     var allHistory: UsageHistory { histories.values.reduce(archived, +) }
@@ -35,16 +44,24 @@ final class SpendModel {
 
     let file: URL
     private let archiveFile: URL
+    private let removedFile: URL
     private let statusFile: (UUID) -> URL
     @ObservationIgnored private var watches: [UUID: FileWatch] = [:]
     @ObservationIgnored private var readers: [UUID: TranscriptReader] = [:]
     @ObservationIgnored private var reading: Set<UUID> = []
     @ObservationIgnored private var readAgain: Set<UUID> = []
+    /// Agents in hidden projects: counted so the totals stay right, but not watched or kept in memory.
+    @ObservationIgnored private var parked: Set<UUID> = []
 
     init(file: URL, statusFile: @escaping (UUID) -> URL) {
         self.file = file
         self.statusFile = statusFile
         archiveFile = file.deletingLastPathComponent().appendingPathComponent("history.json")
+        removedFile = file.deletingLastPathComponent().appendingPathComponent("project-totals.json")
+        if let data = try? Data(contentsOf: removedFile),
+           let saved = try? JSONDecoder().decode([ProjectTotal].self, from: data) {
+            removed = saved
+        }
         if let data = try? Data(contentsOf: archiveFile),
            let saved = try? JSONDecoder().decode(UsageHistory.self, from: data) {
             archived = saved
@@ -57,6 +74,7 @@ final class SpendModel {
 
     /// Starts following an agent. Safe to call again.
     func watch(_ id: UUID) {
+        parked.remove(id)
         guard watches[id] == nil else { return }
         let url = statusFile(id)
         if !FileManager.default.fileExists(atPath: url.path) {
@@ -67,8 +85,32 @@ final class SpendModel {
         countTokens(id)
     }
 
-    /// Stops following an agent that's being deleted, so its status file can go.
-    func forget(_ id: UUID) {
+    /// Stops following an agent whose project is hidden, keeping what it used. Counts it once if it hasn't been yet,
+    /// as at launch, then lets go of its reader and file watch.
+    func park(_ id: UUID) {
+        parked.insert(id)
+        watches[id] = nil
+        readers[id] = nil
+        if tokens[id] == nil { countTokens(id) }
+    }
+
+    /// Stops following an agent that's being deleted, so its status file can go. What it used is kept under
+    /// its project.
+    func forget(_ id: UUID, from project: Project?) {
+        let t = tokens[id] ?? TokenCount(), cost = entries[id]?.totalCost ?? 0
+        if let project, t.total > 0 || cost > 0 {
+            var total = removed.first { $0.isFor(project) } ?? ProjectTotal(name: project.name, path: project.path)
+            removed.removeAll { $0.isFor(project) }
+            // Follows the project's latest name and folder.
+            total.name = project.name
+            total.path = project.path
+            total.repo = project.repo ?? total.repo
+            total.tokens = total.tokens + t
+            total.cost += cost
+            removed.append(total)
+            if let data = try? JSONEncoder().encode(removed) { try? data.write(to: removedFile, options: .atomic) }
+        }
+        parked.remove(id)
         watches[id] = nil
         readers[id] = nil
         tokens[id] = nil
@@ -117,8 +159,8 @@ final class SpendModel {
             guard let self else { return }
             reading.remove(id)
             // Deleted while reading.
-            guard watches[id] != nil else { return }
-            readers[id] = reader
+            guard watches[id] != nil || parked.contains(id) else { return }
+            readers[id] = parked.contains(id) ? nil : reader
             if tokens[id] != reader.count { tokens[id] = reader.count }
             if histories[id] != reader.history { histories[id] = reader.history }
             if readAgain.remove(id) != nil { countTokens(id) }
@@ -130,7 +172,23 @@ final class SpendModel {
     }
 }
 
-struct TokenCount: Equatable, Sendable {
+/// What a project's deleted agents used. Matched to projects by repo, folder or name rather than id, so a
+/// project that's removed and added again gets its numbers back.
+struct ProjectTotal: Codable, Equatable {
+    var name: String
+    var path: String
+    var repo: String?
+    var tokens = TokenCount()
+    var cost = 0.0
+
+    /// The same GitHub repo; without one to go by, the same folder or name, since a project can move.
+    func isFor(_ p: Project) -> Bool {
+        if let repo, let other = p.repo { return repo.caseInsensitiveCompare(other) == .orderedSame }
+        return path == p.path || name == p.name
+    }
+}
+
+struct TokenCount: Codable, Equatable, Sendable {
     var input = 0
     var cacheWrite = 0
     var cacheRead = 0
@@ -207,13 +265,16 @@ struct TranscriptReader: Sendable {
 struct TokenBadge: View {
     @Environment(AppStore.self) private var store
     let agents: [UUID]
+    /// Also counts what this project's deleted agents used.
+    var project: Project?
     /// Who the numbers belong to, for the tooltip: "this agent", "this meeting"…
     var scope = "this agent"
 
     var body: some View {
         let spend = store.spend
-        let tokens = spend.tokens(for: agents)
-        let cost = spend.cost(for: agents)
+        let past = project.map { spend.removed(in: $0) } ?? (tokens: TokenCount(), cost: 0)
+        let tokens = spend.tokens(for: agents) + past.tokens
+        let cost = spend.cost(for: agents) + past.cost
         if tokens.total > 0 || cost > 0 {
             HStack(spacing: 4) {
                 Text("\(Self.short(tokens.total)) tokens")

@@ -27,7 +27,7 @@ struct NewAgentSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if store.projects.isEmpty {
+            if store.shownProjects.isEmpty {
                 Text("New Agent").font(.title2.weight(.semibold)).padding([.horizontal, .top], 24)
                 noProjects
             } else {
@@ -37,7 +37,7 @@ struct NewAgentSheet: View {
         .frame(width: 480)
         .onAppear {
             projectGiven = store.newAgentProject != nil
-            projectID = store.newAgentProject ?? store.projects.first?.id
+            projectID = store.newAgentProject ?? store.shownProjects.first?.id
             let available = store.tools.providers
             provider = available.contains(AgentDefaults.provider) ? AgentDefaults.provider : (available.first ?? .claude)
             model = provider == .claude ? AgentDefaults.model : "default"
@@ -98,7 +98,7 @@ struct NewAgentSheet: View {
                 Spacer()
                 if !projectGiven {
                     Picker("Project", selection: $projectID) {
-                        ForEach(store.projects) { Text($0.name).tag(Optional($0.id)) }
+                        ForEach(store.shownProjects) { Text($0.name).tag(Optional($0.id)) }
                     }
                     .labelsHidden()
                     .fixedSize()
