@@ -34,6 +34,10 @@ enum DebugSnapshot {
             runTestIssue(store: store, path: path)
             return
         }
+        if let path = ProcessInfo.processInfo.environment["HIVEMINDS_DEMO"] {
+            runDemo(store: store, path: path)
+            return
+        }
         guard let prefix = ProcessInfo.processInfo.environment["HIVEMINDS_SNAPSHOT"] else { return }
         var steps: [(String, () -> Void)] = [
             ("overview", { store.mode = .agents; store.selection = .overview }),
@@ -161,6 +165,11 @@ enum DebugSnapshot {
                 apply()
                 try? await Task.sleep(for: .seconds(name == "agent" ? 12 : 2.5))
                 for (i, window) in NSApp.windows.enumerated() where window.isVisible {
+                    // The window as it's on screen, glass and blur included. An app may capture its own windows
+                    // without screen-recording permission; the call is hidden from the SDK, so it's looked up.
+                    if let image = ownWindowImage(window), let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: "\(prefix)-\(name)-\(i)-screen.png"))
+                    }
                     guard let view = window.contentView?.superview ?? window.contentView,
                           let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
                     view.cacheDisplay(in: view.bounds, to: rep)
@@ -185,6 +194,118 @@ enum DebugSnapshot {
             }
             if ProcessInfo.processInfo.environment["HIVEMINDS_SNAPSHOT_QUIT"] != nil { exit(0) }
         }
+    }
+
+    /// `HIVEMINDS_DEMO=/path/to/repo` with `HIVEMINDS_SNAPSHOT=/path/prefix`: the README's screenshots. Starts four
+    /// Haiku agents and a short meeting there, then captures the Canvas, an agent, the meeting, Overview and History.
+    /// Use a scratch support dir and a scratch repo: the agents run unrestricted.
+    private static func runDemo(store: AppStore, path: String) {
+        let env = ProcessInfo.processInfo.environment
+        let prefix = env["HIVEMINDS_SNAPSHOT"] ?? "/tmp/hiveminds-demo"
+        let project = store.addProject(path: path, repo: nil)
+        func log(_ s: String) { print(s); fflush(stdout) }
+        @MainActor func snap(_ name: String) {
+            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "HiveMinds" }) ?? NSApp.windows.first(where: \.isVisible),
+                  let image = ownWindowImage(window),
+                  let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { log("DEMO-SNAP-FAIL \(name)"); return }
+            try? png.write(to: URL(fileURLWithPath: "\(prefix)-\(name).png"))
+            log("DEMO-SNAP \(name)")
+        }
+        let tasks = [
+            "Add a --units flag (metric or imperial) to the CLI and use it in describe(). Keep it small. Commit when done.",
+            "Write unittest tests for describe() in tests/test_forecast.py using a sample payload. Run them. Commit when done.",
+            "Cache fetch() results on disk for 10 minutes in a .cache folder next to the code. Explain the approach briefly, then implement it and commit.",
+            "Read the code and improve README.md: install, usage with examples, and the new flags if any exist. Commit when done.",
+        ]
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            NSApp.windows.first { $0.isVisible && $0.title == "HiveMinds" }?.setContentSize(NSSize(width: 1440, height: 900))
+            do {
+                try await store.startMeeting(projectID: project.id, pattern: .debate,
+                                             topic: "Should weather-cli cache forecasts on disk or in memory? Keep every note under 80 words.",
+                                             seats: 2, rounds: 1, prNumber: nil, model: "haiku")
+                for task in tasks {
+                    try await store.createAgent(projectID: project.id, provider: .claude, model: "haiku", access: .unrestricted,
+                                                role: "", task: task, ownBranch: true, open: false)
+                }
+            } catch { log("DEMO-FAIL \(error.localizedDescription)"); exit(1) }
+            let meeting = store.meetings.last
+            let seats = Set(meeting?.seats.map(\.agentID) ?? [])
+            let agents = store.agents.filter { $0.projectID == project.id && !seats.contains($0.id) }
+            store.selection = .project(project.id)
+            // Answers "trust this folder?" for each agent and seat: down to "Yes", then Return, then a pause so
+            // the next try doesn't move the choice back before the first has landed.
+            @MainActor func trust() async {
+                for id in agents.map(\.id) + seats where store.state(id).status == .starting {
+                    Terminals.shared.sendKeys(id, "\u{1b}[B")
+                    try? await Task.sleep(for: .milliseconds(700))
+                    Terminals.shared.sendKeys(id, "\r")
+                    try? await Task.sleep(for: .seconds(4))
+                }
+            }
+            for _ in 0..<20 {
+                await trust()
+                if agents.allSatisfy({ store.state($0.id).status == .working }) { break }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            try? await Task.sleep(for: .seconds(12))
+            snap("canvas")
+            if let a = agents.first {
+                store.select(a.id)
+                try? await Task.sleep(for: .seconds(4))
+                snap("agent-working")
+            }
+            for _ in 0..<160 {
+                await trust()
+                if let m = meeting.flatMap({ store.meeting($0.id) }) { log("DEMO-WAIT meeting=\(m.status.rawValue) seats=\(m.seats.map { store.state($0.agentID).status.rawValue })") }
+                let agentsDone = agents.allSatisfy { store.state($0.id).status == .done }
+                if agentsDone, meeting.flatMap({ store.meeting($0.id) })?.status == .finished { break }
+                try? await Task.sleep(for: .seconds(3))
+            }
+            if let a = agents.first {
+                store.select(a.id)
+                try? await Task.sleep(for: .seconds(3))
+                snap("agent")
+            }
+            store.selection = .project(project.id)
+            try? await Task.sleep(for: .seconds(3))
+            snap("canvas-done")
+            if let m = meeting {
+                store.openMeeting(m.id)
+                try? await Task.sleep(for: .seconds(3))
+                snap("meeting")
+                store.meetingTab = .outcome
+                try? await Task.sleep(for: .seconds(3))
+                snap("meeting-outcome")
+            }
+            store.mode = .agents
+            store.selection = .overview
+            try? await Task.sleep(for: .seconds(3))
+            snap("overview")
+            store.selection = .history
+            try? await Task.sleep(for: .seconds(3))
+            snap("history")
+            log("DEMO-DONE")
+            exit(0)
+        }
+    }
+
+    private static func ownWindowImage(_ window: NSWindow) -> CGImage? {
+        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        // .optionIncludingWindow (8); .boundsIgnoreFraming (1) | .bestResolution (8)
+        guard let image = unsafeBitCast(sym, to: Capture.self)(.null, 8, UInt32(window.windowNumber), 9)?.takeRetainedValue(),
+              let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        // The see-through parts are see-through in the capture too, so it's laid on black, like a dark desktop.
+        // The corners outside the rounded window stay clear.
+        let rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let radius = 16 * window.backingScaleFactor
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.setFillColor(.black)
+        ctx.fillPath()
+        ctx.draw(image, in: rect)
+        return ctx.makeImage()
     }
 
     /// `HIVEMINDS_TEST_ASK=/path/to/repo` starts a Haiku agent on Manual review there, then answers its

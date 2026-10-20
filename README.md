@@ -16,11 +16,9 @@
   <a href="https://github.com/eptkod/HiveMinds/releases/latest"><b>Download for macOS</b></a>
 </p>
 
-<!-- screenshot: add the file, then remove this comment
 <p align="center">
-  <img src="docs/screenshots/canvas.png" alt="The Canvas: every agent in a project, side by side">
+  <img src="docs/screenshots/canvas.png" alt="The Canvas: four agents and a meeting working on one project, side by side">
 </p>
--->
 
 ## What it is
 
@@ -36,41 +34,29 @@ The **Canvas** shows every agent, browser tab and shell in a project side by sid
 
 An agent can work on its own copy of the project, so several can change code at the same time without stepping on each other. When it's done, look at what it changed, then let HiveMinds write the pull request. Nothing is pushed until you say so.
 
-<!-- screenshot: add the file, then remove this comment
 <p align="center">
-  <img src="docs/screenshots/agent.png" alt="An agent working on its own branch">
+  <img src="docs/screenshots/agent.png" alt="An agent on its own branch, showing the change it made">
 </p>
--->
 
 ### Hold meetings
 
 Ask a few agents to debate an idea or review some code together. They take turns, and you get a written summary of what they agreed on.
 
-<!-- screenshot: add the file, then remove this comment
 <p align="center">
-  <img src="docs/screenshots/meeting.png" alt="A meeting between agents">
+  <img src="docs/screenshots/meeting.png" alt="The written outcome of a meeting between two agents">
 </p>
--->
 
 ### Turn GitHub issues into work
 
 Sign in with the GitHub CLI and HiveMinds lists the open issues across your projects. Pick one, and an agent starts on it. Its pull request closes the issue when it's merged.
 
-<!-- screenshot: add the file, then remove this comment
-<p align="center">
-  <img src="docs/screenshots/issues.png" alt="Open GitHub issues, ready to hand to an agent">
-</p>
--->
-
 ### Keep an eye on cost
 
 Every agent shows its tokens and an estimated cost. The Overview charts your activity, and you can see how much of your Claude plan's 5-hour and weekly limits you've used.
 
-<!-- screenshot: add the file, then remove this comment
 <p align="center">
   <img src="docs/screenshots/overview.png" alt="The Overview page with usage charts">
 </p>
--->
 
 ### And a few more things
 
@@ -79,6 +65,10 @@ Every agent shows its tokens and an estimated cost. The Overview charts your act
 - **Stay awake:** keep the Mac from sleeping while agents are still working.
 - **Tidy sidebar:** drag projects into the order you like, and hide the ones you're done with.
 - **Light on your Mac:** native SwiftUI, no busy animations, and nothing running when you're idle.
+
+<p align="center">
+  <img src="docs/screenshots/history.png" alt="The History page, listing current and deleted agents">
+</p>
 
 ## Install
 

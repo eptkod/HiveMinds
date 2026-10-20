@@ -21,6 +21,7 @@ The details behind the [README](../README.md): where HiveMinds keeps things, how
 - Per-agent status line snapshots (cost and tokens, used for meeting totals): `~/Library/Application Support/HiveMinds/status/<agent id>.json`.
 - Token badges (tokens used and the API-price estimate, top right of every agent, meeting and Canvas header): code in `Sources/HiveMinds/TokenUsage.swift`. Each agent's cost and transcript paths are saved in `~/Library/Application Support/HiveMinds/spend.json`; tokens are counted from Claude Code's transcripts.
 - Testing a meeting without touching your real state (debug build): `HIVEMINDS_SUPPORT_DIR=/tmp/x HIVEMINDS_TEST_MEETING=/path/to/git/repo build/HiveMinds.app/Contents/MacOS/HiveMinds` runs a short Haiku debate and prints its progress. The repo must be in a folder Claude Code already trusts.
+- README screenshots (debug build): `HIVEMINDS_SUPPORT_DIR=<copy of your app data> HIVEMINDS_SNAPSHOT=<path prefix> HIVEMINDS_DEMO=<scratch git repo> build/HiveMinds.app/Contents/MacOS/HiveMinds` starts four Haiku agents and a short meeting in that repo (unrestricted, so use a throwaway one), then saves `<prefix>-canvas.png`, `-agent-working.png`, `-meeting-outcome.png`, `-overview.png`, `-history.png` and a few more. The window captures itself, so no screen-recording permission is needed, and it's drawn on solid black. Shrink them with `sips -Z 1800` into `docs/screenshots/`.
 
 ## Branding
 

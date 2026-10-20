@@ -183,6 +183,16 @@ private struct WindowConfigurator: NSViewRepresentable {
 
     private func apply(to window: NSWindow?) {
         guard let window else { return }
+        #if DEBUG
+        // Debug snapshots capture the window on its own, where the see-through blur has nothing behind it
+        // and comes out grey, so they get the solid black it looks like over a dark desktop.
+        if ProcessInfo.processInfo.environment["HIVEMINDS_SNAPSHOT"] != nil {
+            window.isOpaque = true
+            window.backgroundColor = .black
+            WindowBlur.set(window, radius: 0)
+            return
+        }
+        #endif
         window.isOpaque = false
         window.backgroundColor = .clear
         WindowBlur.set(window, radius: blur)
