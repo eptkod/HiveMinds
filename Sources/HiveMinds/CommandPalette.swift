@@ -134,6 +134,10 @@ struct CommandPalette: View {
             store.mode = .agents
             store.selection = .overview
         })
+        out.append(PaletteItem(id: "a.history", title: "History", subtitle: "⌘Y", icon: "clock.arrow.circlepath") {
+            store.mode = .agents
+            store.selection = .history
+        })
         out.append(PaletteItem(id: "a.settings", title: "Settings", subtitle: "⌘,", icon: "gearshape") { openSettings() })
 
         // Places, the open project's first.

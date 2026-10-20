@@ -109,6 +109,8 @@ struct RootView: View {
                 case .agents:
                     if let id = store.currentProjectID, let project = store.project(id) {
                         WorkspaceView(project: project)
+                    } else if store.selection == .history {
+                        HistoryView()
                     } else {
                         OverviewView()
                     }

@@ -31,6 +31,7 @@ struct AgentDetailView: View {
                     .help(details)
                 TokenBadge(agents: [agent.id])
                 HStack(spacing: 2) {
+                    ChangesButton(agent: agent)
                     if agent.branch != nil {
                         Button { showingPR = true } label: {
                             if let pr = agent.pullRequest {

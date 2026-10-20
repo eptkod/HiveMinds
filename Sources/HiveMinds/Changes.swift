@@ -1,13 +1,17 @@
 import SwiftUI
 
 /// What an agent has changed: on its own branch, everything since it left the branch it came from
-/// (commits and uncommitted work alike); in the project folder, whatever isn't committed yet.
+/// (commits and uncommitted work alike); in the project folder, whatever isn't committed yet in the files
+/// it edited itself, since other agents may be working in the same folder.
 struct ChangeSet {
     /// What the changes are measured against, in words: "main", "the last commit".
     var base: String
     /// The commit the diff is taken from.
     var baseRef: String
     var files: [ChangedFile]
+    /// In the project folder, true when `files` is cut down to the ones the agent edited. False when that
+    /// can't be known (a Codex agent), so the list is everything uncommitted in the folder.
+    var onlyItsOwn = false
 
     var added: Int { files.reduce(0) { $0 + ($1.added ?? 0) } }
     var removed: Int { files.reduce(0) { $0 + ($1.removed ?? 0) } }
@@ -66,7 +70,16 @@ extension AppStore {
             let text = try? String(contentsOfFile: cwd + "/" + path, encoding: .utf8)
             files.append(ChangedFile(path: path, added: text.map { $0.split(separator: "\n", omittingEmptySubsequences: false).count }, removed: text == nil ? nil : 0, untracked: true))
         }
-        return ChangeSet(base: base, baseRef: baseRef, files: files.sorted { $0.path < $1.path })
+        var onlyItsOwn = false
+        if agent.branch == nil, agent.provider == .claude {
+            // Git can't tell agents in one folder apart, so keep only what this one wrote to.
+            let transcripts = spend.entries[agent.id]?.transcripts ?? []
+            let edited = await EditedFiles.shared.edits(agent.id, transcripts: transcripts)
+            let root = (cwd as NSString).standardizingPath + "/"
+            files = files.filter { edited.touched(root + $0.path, relative: $0.path) }
+            onlyItsOwn = true
+        }
+        return ChangeSet(base: base, baseRef: baseRef, files: files.sorted { $0.path < $1.path }, onlyItsOwn: onlyItsOwn)
     }
 
     /// One file's diff, cut off after `limit` lines so a huge file can't stall the window.
@@ -99,6 +112,127 @@ extension AppStore {
             }
             return (lines, cut)
         }.value
+    }
+}
+
+/// What a Claude Code agent wrote to: the files its Edit, Write, MultiEdit and NotebookEdit calls name,
+/// plus its shell commands that write something. A command counts for a file when it names that file,
+/// other than to run it (`scripts/build.sh` running a build doesn't change the script).
+struct Edits: Sendable {
+    var paths: Set<String> = []
+    var commands: [String] = []
+
+    func touched(_ path: String, relative: String) -> Bool {
+        paths.contains(path) || commands.contains { Self.names($0, path) || Self.names($0, relative) }
+    }
+
+    private static func names(_ command: String, _ path: String) -> Bool {
+        var from = command.startIndex
+        while let r = command.range(of: path, range: from..<command.endIndex) {
+            let before = command[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
+            let runs = before.isEmpty || before.last.map { ";&|\n(".contains($0) } == true
+                || ["bash", "sh", "zsh", "source", "."].contains { before.hasSuffix(" " + $0) || before == $0 }
+            if !runs { return true }
+            from = r.upperBound
+        }
+        return false
+    }
+}
+
+/// Reads each agent's `Edits` from its transcripts (subagents' included). Remembers how far it got in each
+/// file, so each look only reads what's new.
+actor EditedFiles {
+    static let shared = EditedFiles()
+    private var offsets: [String: UInt64] = [:]
+    private var edited: [UUID: Edits] = [:]
+    /// Signs that a shell command writes a file: a redirect to a file, an in-place edit, a move or copy,
+    /// or a script opening a file for writing.
+    private static let writes = try! NSRegularExpression(pattern:
+        #"(?<![0-9&])>>?\s*(?!&|/dev/)|\b(sed|perl)\s+-p?i|\b(tee|mv|cp|rm|patch|touch)\s|git\s+(apply|checkout|restore)|\.write(_text)?\(|open\([^)]*['"][wa]\+?['"]|writeFileSync|\bcat\s*<<"#)
+
+    func edits(_ id: UUID, transcripts: [String]) -> Edits {
+        var set = edited[id] ?? Edits()
+        for path in transcripts {
+            read(path, into: &set)
+            let subagents = (path as NSString).deletingPathExtension + "/subagents"
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: subagents)) ?? [] where name.hasSuffix(".jsonl") {
+                read(subagents + "/" + name, into: &set)
+            }
+        }
+        edited[id] = set
+        return set
+    }
+
+    private func read(_ path: String, into set: inout Edits) {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return }
+        defer { try? handle.close() }
+        var offset = offsets[path] ?? 0
+        let size = (try? handle.seekToEnd()) ?? 0
+        if size < offset { offset = 0 }
+        guard size > offset else { return }
+        try? handle.seek(toOffset: offset)
+        guard let data = try? handle.readToEnd(), let end = data.lastIndex(of: 0x0A) else { return }
+        // Only whole lines; a line still being written is read next time.
+        offsets[path] = offset + UInt64(end - data.startIndex + 1)
+        let marker = Data(#""tool_use""#.utf8)
+        for line in data[data.startIndex..<end].split(separator: 0x0A) where line.range(of: marker) != nil {
+            guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  json["type"] as? String == "assistant",
+                  let blocks = (json["message"] as? [String: Any])?["content"] as? [[String: Any]] else { continue }
+            for block in blocks where block["type"] as? String == "tool_use" {
+                guard let input = block["input"] as? [String: Any] else { continue }
+                switch block["name"] as? String {
+                case "Edit", "Write", "MultiEdit", "NotebookEdit":
+                    if let file = input["file_path"] as? String ?? input["notebook_path"] as? String {
+                        set.paths.insert((file as NSString).standardizingPath)
+                    }
+                case "Bash":
+                    if let command = input["command"] as? String,
+                       Self.writes.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
+                        set.commands.append(command)
+                    }
+                default: break
+                }
+            }
+        }
+    }
+}
+
+/// Opens an agent's changes, with how many lines it added and removed: "+500 −20".
+/// The count is read again only when the agent's status changes (a turn ending, say), so nothing polls.
+struct ChangesButton: View {
+    @Environment(AppStore.self) private var store
+    let agent: Agent
+    @State private var counts: (added: Int, removed: Int)?
+
+    var body: some View {
+        if store.canShowChanges(agent) {
+            Button { store.showingChanges = agent } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "plusminus")
+                    if let counts, counts.added + counts.removed > 0 {
+                        Text("+\(counts.added)").foregroundStyle(.green)
+                        Text("−\(counts.removed)").foregroundStyle(.red)
+                    }
+                }
+                .font(.caption.monospacedDigit())
+                .fixedSize()
+                .contentTransition(.numericText())
+                .animation(Motion.press, value: counts?.added)
+            }
+            .buttonStyle(.borderless)
+            .help(help)
+            .task(id: store.state(agent.id).status) {
+                guard let set = try? await store.changes(of: agent) else { return }
+                counts = (set.added, set.removed)
+            }
+        }
+    }
+
+    private var help: String {
+        guard let counts, counts.added + counts.removed > 0 else { return "Show changes. Nothing changed yet." }
+        let note = agent.branch == nil && agent.provider != .claude ? ", counting every agent's work in the project folder" : ""
+        return "Show changes: \(counts.added) lines added, \(counts.removed) removed\(note)"
     }
 }
 
@@ -154,6 +288,7 @@ struct ChangesSheet: View {
         let what = agent.title
         guard let set else { return what }
         if agent.branch != nil { return "\(what) · \(agent.branch!) compared with \(set.base)" }
+        if set.onlyItsOwn { return "\(what) · not committed yet, in the files it edited in the project folder" }
         return "\(what) · not committed yet in the project folder, which can include changes from others"
     }
 

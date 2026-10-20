@@ -25,6 +25,10 @@ final class GitHubModel {
     var repos: [Repo] = []
     var loadingRepos = false
     var cloning: Set<String> = []
+    /// Open issues per repository (owner/name), loaded when the Issues view asks.
+    var issues: [String: [Issue]] = [:]
+    var loadingIssues: Set<String> = []
+    var issueErrors: [String: String] = [:]
     var error: String?
     var gh: String?
     private var loginProcess: Process?

@@ -13,6 +13,8 @@ struct SidebarView: View {
         List(selection: $store.selection) {
             Label("Overview", systemImage: "square.grid.2x2")
                 .tag(SidebarItem.overview)
+            Label("History", systemImage: "clock.arrow.circlepath")
+                .tag(SidebarItem.history)
 
             ForEach(store.projects) { project in
                 Section {

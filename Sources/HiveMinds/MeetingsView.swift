@@ -670,13 +670,13 @@ struct SeatTile<Drag: Gesture>: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 StatusDot(status: s.status, size: 7)
-                Text(agent.title).font(.callout.weight(.medium)).lineLimit(1)
+                Text(agent.title).font(.callout.weight(.medium)).lineLimit(1).layoutPriority(1)
                 Text(turnLabel(turn))
                     .font(.caption)
                     .foregroundStyle(turn == .stuck || s.status == .needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                 if turn == .working || turn == .nudged {
-                    Text(s.activity).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(s.activity).font(.caption).foregroundStyle(.tertiary).lineLimit(1).shownInTiles(from: 480)
                 }
                 Spacer(minLength: 6)
                 if turn == .stuck || turn == .nudged {
@@ -685,7 +685,7 @@ struct SeatTile<Drag: Gesture>: View {
                         .font(.caption)
                         .help("Move on without waiting for its notes file")
                 }
-                TokenBadge(agents: [agent.id])
+                TokenBadge(agents: [agent.id]).shownInTiles(from: 400)
                 Button { store.meetingTab = .seat(agent.id) } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                 }

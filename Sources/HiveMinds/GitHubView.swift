@@ -4,18 +4,35 @@ struct GitHubView: View {
     @Environment(AppStore.self) private var store
     @State private var search = ""
     @State private var confirmDisconnect = false
+    @AppStorage(SettingKey.githubTab) private var tab = Tab.repositories
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case repositories = "Repositories", issues = "Issues"
+        var id: String { rawValue }
+    }
 
     private var gh: GitHubModel { store.github }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageHeader(title: "GitHub", subtitle: "Connect once, then pick the repositories your agents work on. They can then commit, open pull requests and publish releases.")
+                PageHeader(title: "GitHub", subtitle: "Connect once, then pick the repositories your agents work on, and hand their issues to agents. Agents can commit, open pull requests and publish releases.")
                 connection
                 if let error = gh.error {
                     Text(error).font(.callout).foregroundStyle(.red)
                 }
-                if gh.login != nil { repos }
+                if gh.login != nil {
+                    Picker("Show", selection: $tab) {
+                        ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    switch tab {
+                    case .repositories: repos
+                    case .issues: IssuesView()
+                    }
+                }
             }
             .padding(32)
             .frame(maxWidth: 780)

@@ -196,3 +196,57 @@ final class EventTail {
         }
     }
 }
+
+/// Scrolling over a terminal whose program has taken the whole screen. Claude Code does this: it draws on
+/// the alternate screen, which has no scrollback, and asks for mouse events so it can scroll its own chat.
+/// SwiftTerm 1.11.2 only ever scrolls its scrollback, so a scroll did nothing there. This passes the scroll
+/// on as mouse-wheel presses (or arrow keys, for a full-screen program that didn't ask for the mouse, like
+/// `less`), one per line of travel. Scrolls over a plain shell go to SwiftTerm as before.
+@MainActor
+enum TerminalScroll {
+    private static var travel: CGFloat = 0
+    private static weak var last: TerminalView?
+
+    /// Whether the scroll was passed to the program under the pointer, so nothing else should see it.
+    static func take(_ event: NSEvent) -> Bool {
+        guard let view = terminal(under: event), let term = view.terminal, term.isCurrentBufferAlternate else { return false }
+        if view !== last || event.phase == .began || event.phase == .mayBegin {
+            last = view
+            travel = 0
+        }
+        let rows = max(term.rows, 1), cols = max(term.cols, 1)
+        let rowHeight = view.bounds.height / CGFloat(rows)
+        // A trackpad reports points, a mouse wheel reports lines.
+        travel += event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / max(rowHeight, 1) : event.scrollingDeltaY
+        let steps = Int(travel.magnitude)
+        guard steps > 0 else { return true }
+        let up = travel > 0
+        travel -= up ? CGFloat(steps) : -CGFloat(steps)
+
+        if view.allowMouseReporting && term.mouseMode != .off {
+            let p = view.convert(event.locationInWindow, from: nil)
+            let col = min(max(Int(p.x / (view.bounds.width / CGFloat(cols))), 0), cols - 1)
+            let row = min(max(Int((view.bounds.height - p.y) / max(rowHeight, 1)), 0), rows - 1)
+            let flags = event.modifierFlags
+            let button = term.encodeButton(button: up ? 4 : 5, release: false, shift: flags.contains(.shift),
+                                           meta: flags.contains(.option), control: flags.contains(.control))
+            for _ in 0..<min(steps, 20) { term.sendEvent(buttonFlags: button, x: col, y: row) }
+        } else {
+            let key = up
+                ? (term.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
+                : (term.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+            for _ in 0..<min(steps, 20) { view.send(key) }
+        }
+        return true
+    }
+
+    private static func terminal(under event: NSEvent) -> TerminalView? {
+        guard let content = event.window?.contentView, let frame = content.superview else { return nil }
+        var view = content.hitTest(frame.convert(event.locationInWindow, from: nil))
+        while let v = view {
+            if let term = v as? TerminalView { return term }
+            view = v.superview
+        }
+        return nil
+    }
+}

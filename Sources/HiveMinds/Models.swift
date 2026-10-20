@@ -160,13 +160,15 @@ struct Agent: Codable, Identifiable, Hashable {
     var meetingID: UUID?
     /// The pull request for its branch, once there is one.
     var pullRequest: PullRequestRef?
+    /// The GitHub issue it was started on, if any.
+    var issue: IssueRef?
 
     static let untitled = "New chat"
     var isUntitled: Bool { title == Agent.untitled }
 
     // Saved as "name", which is what earlier versions called the title.
     enum CodingKeys: String, CodingKey {
-        case id, projectID, title = "name", provider, model, effort, access, role, cwd, branch, sessionID, hasStarted, pendingTask, createdAt, meetingID, pullRequest
+        case id, projectID, title = "name", provider, model, effort, access, role, cwd, branch, sessionID, hasStarted, pendingTask, createdAt, meetingID, pullRequest, issue
     }
 
     /// A quick title from the request itself, used until a better one comes back.
@@ -232,6 +234,8 @@ enum Mode: String, CaseIterable, Identifiable {
 
 enum SidebarItem: Hashable {
     case overview
+    /// Every agent, including deleted ones.
+    case history
     /// A project's workspace on its Canvas tab.
     case project(UUID)
     case agent(UUID)

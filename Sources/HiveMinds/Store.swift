@@ -11,6 +11,8 @@ final class AppStore {
     var canvasOrder: [UUID: [UUID]] = [:]
     /// Tiles you've sized by hand on each project's Canvas, by tile id. The rest fill the space left.
     var canvasPins: [UUID: [UUID: TilePin]] = [:]
+    /// Tiles you've carried onto pages of their own on each project's Canvas: tile id to page group.
+    var canvasGroups: [UUID: [UUID: Int]] = [:]
     var meetings: [Meeting] = []
     /// The meeting room that's open on the Meetings page, if any, and which of its tabs.
     var meetingSelection: UUID?
@@ -20,7 +22,9 @@ final class AppStore {
     var pendingDeleteMeeting: Meeting?
     /// Text to type into an agent's terminal once its session is ready.
     var pendingInput: [UUID: String] = [:]
-    var live: [UUID: LiveState] = [:]
+    var live: [UUID: LiveState] = [:] {
+        didSet { KeepAwake.update(working: live.values.contains { $0.status == .working }) }
+    }
     var mode: Mode = .agents
     var selection: SidebarItem? = .overview
     var showingNewAgent = false
@@ -45,6 +49,8 @@ final class AppStore {
     let usage: UsageModel
     /// Tokens and estimated API cost per agent.
     let spend: SpendModel
+    /// Agents you deleted, for the History page.
+    let history: AgentHistoryModel
 
     let supportDir: URL
     let eventsDir: URL
@@ -77,6 +83,7 @@ final class AppStore {
         spend = SpendModel(file: supportDir.appendingPathComponent("spend.json")) {
             statusDir.appendingPathComponent("\($0.uuidString).json")
         }
+        history = AgentHistoryModel(file: supportDir.appendingPathComponent("agent-history.json"))
         for dir in [supportDir, eventsDir, statusDir] {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
@@ -108,6 +115,7 @@ final class AppStore {
         var shellTabs: [ShellTab]?
         var canvasOrder: [UUID: [UUID]]?
         var canvasPins: [UUID: [UUID: TilePin]]?
+        var canvasGroups: [UUID: [UUID: Int]]?
         var meetings: [Meeting]?
     }
 
@@ -120,6 +128,7 @@ final class AppStore {
         shellTabs = saved.shellTabs ?? []
         canvasOrder = saved.canvasOrder ?? [:]
         canvasPins = saved.canvasPins ?? [:]
+        canvasGroups = saved.canvasGroups ?? [:]
         meetings = saved.meetings ?? []
         // Meetings that were running when the app quit wait for you to resume them.
         for i in meetings.indices where meetings[i].status == .running {
@@ -138,7 +147,7 @@ final class AppStore {
     func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(Saved(projects: projects, agents: agents, browserTabs: browserTabs, shellTabs: shellTabs, canvasOrder: canvasOrder, canvasPins: canvasPins, meetings: meetings)) {
+        if let data = try? enc.encode(Saved(projects: projects, agents: agents, browserTabs: browserTabs, shellTabs: shellTabs, canvasOrder: canvasOrder, canvasPins: canvasPins, canvasGroups: canvasGroups, meetings: meetings)) {
             try? data.write(to: stateFile, options: .atomic)
         }
     }
@@ -303,7 +312,9 @@ final class AppStore {
     }
 
     func removeProject(_ project: Project) {
-        for a in agents where a.projectID == project.id { Terminals.shared.stop(a.id) }
+        let gone = agents.filter { $0.projectID == project.id }
+        remember(gone)
+        for a in gone { Terminals.shared.stop(a.id); spend.forget(a.id) }
         agents.removeAll { $0.projectID == project.id }
         meetings.removeAll { $0.projectID == project.id }
         if let id = meetingSelection, meeting(id) == nil { meetingSelection = nil }
@@ -313,6 +324,7 @@ final class AppStore {
         shellTabs.removeAll { $0.projectID == project.id }
         canvasOrder.removeValue(forKey: project.id)
         canvasPins.removeValue(forKey: project.id)
+        canvasGroups.removeValue(forKey: project.id)
         projects.removeAll { $0.id == project.id }
         selection = .overview
         save()
@@ -334,7 +346,7 @@ final class AppStore {
         case .browser(let id): browserTab(id)?.projectID
         case .shell(let id): shellTab(id)?.projectID
         case .meeting(let id): meeting(id)?.projectID
-        case .overview, nil: nil
+        case .overview, .history, nil: nil
         }
     }
 
@@ -344,14 +356,16 @@ final class AppStore {
     }
 
     func createAgent(projectID: UUID, provider: Provider, model: String, effort: Effort = AgentDefaults.effort,
-                     access: Access = AgentDefaults.access, role: String, task: String, attachments: [Attachment] = [], ownBranch: Bool) async throws {
+                     access: Access = AgentDefaults.access, role: String, task: String, attachments: [Attachment] = [], ownBranch: Bool,
+                     issue: IssueRef? = nil, open: Bool = true) async throws {
         guard let project = project(projectID) else { throw NewAgentError("Pick a project first.") }
         let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
         var cwd = project.path
         var branch: String?
         if ownBranch {
             let suffix = String(UUID().uuidString.prefix(4)).lowercased()
-            (cwd, branch) = try await makeWorktree(project: project, slug: "\(slugify(t.isEmpty ? "agent" : Agent.roughTitle(t)))-\(suffix)")
+            let name = issue.map { "issue-\($0.number)-\($0.title)" } ?? (t.isEmpty ? "agent" : Agent.roughTitle(t))
+            (cwd, branch) = try await makeWorktree(project: project, slug: "\(slugify(name))-\(suffix)")
         }
         // Attachments are copied into the agent's own folder, where it can read them without asking,
         // and kept out of git like the rest of `.hiveminds`.
@@ -366,12 +380,15 @@ final class AppStore {
         var agent = Agent(projectID: projectID, provider: provider, model: model, effort: effort, access: access,
                           role: role.trimmingCharacters(in: .whitespacesAndNewlines),
                           cwd: cwd, branch: branch, pendingTask: prompt.isEmpty ? nil : prompt)
-        if !t.isEmpty { agent.title = Agent.roughTitle(t) }
+        agent.issue = issue
+        // An issue already has a title someone wrote, so it doesn't need one from Haiku.
+        if let issue { agent.title = Agent.roughTitle(issue.title) } else if !t.isEmpty { agent.title = Agent.roughTitle(t) }
         agents.append(agent)
         live[agent.id] = LiveState(status: .starting, activity: "Starting up")
         save()
-        select(agent.id)
-        if !t.isEmpty { nameChat(agent.id, from: t) }
+        // Not opened: start it in the background, the way meeting seats run.
+        if open { select(agent.id) } else { _ = Terminals.shared.view(for: agent) }
+        if issue == nil && !t.isEmpty { nameChat(agent.id, from: t) }
     }
 
     /// Asks Haiku for a short title for the chat, in the background. The rough title stays if that fails.
@@ -454,6 +471,7 @@ final class AppStore {
                 notice = "The folder for \"\(agent.title)\" was kept because it has changes that aren't committed: \(agent.cwd)"
             }
         }
+        remember([agent])
         agents.removeAll { $0.id == agent.id }
         live.removeValue(forKey: agent.id)
         spend.forget(agent.id)
@@ -502,6 +520,13 @@ final class AppStore {
     func pinCanvas(in project: Project, _ pins: [UUID: TilePin]) {
         let current = Set(canvasItems(in: project))
         canvasPins[project.id] = pins.filter { current.contains($0.key) }
+        save()
+    }
+
+    /// Saves which Canvas tiles you've carried onto pages of their own. Ones that are gone are dropped.
+    func groupCanvas(in project: Project, _ groups: [UUID: Int]) {
+        let current = Set(canvasItems(in: project))
+        canvasGroups[project.id] = groups.filter { current.contains($0.key) }
         save()
     }
 

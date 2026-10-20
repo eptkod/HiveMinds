@@ -737,6 +737,7 @@ extension AppStore {
     /// Removes the meeting and its seats. Its branch, and so its committed outcome, stays. Its folder goes
     /// only if nothing in it is left uncommitted.
     func deleteMeeting(_ m: Meeting) async {
+        remember(agents.filter { $0.meetingID == m.id })
         for seat in m.seats {
             Terminals.shared.stop(seat.agentID)
             pendingInput[seat.agentID] = nil

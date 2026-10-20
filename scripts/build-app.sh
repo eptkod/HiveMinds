@@ -21,6 +21,15 @@ cp "$BIN/HiveMinds" "$APP/Contents/MacOS/HiveMinds"
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 # App icon. Regenerate it with branding/scripts/render.sh after changing the design.
 cp branding/icon/HiveMinds.icns "$APP/Contents/Resources/AppIcon.icns"
+# Optional Whisper helper for dictation (Settings > Voice). Built once and cached; HIVEMINDS_NO_WHISPER=1 leaves it out.
+if [ -z "${HIVEMINDS_NO_WHISPER:-}" ]; then
+  if scripts/build-whisper-helper.sh; then
+    cp build/whisper/hiveminds-whisper "$APP/Contents/MacOS/hiveminds-whisper"
+    codesign --force --sign - "$APP/Contents/MacOS/hiveminds-whisper" >/dev/null
+  else
+    echo "warning: the Whisper helper didn't build, so dictation will only offer Apple's engine" >&2
+  fi
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -33,11 +42,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>HiveMinds</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.2.0</string>
-  <key>CFBundleVersion</key><string>3</string>
+  <key>CFBundleShortVersionString</key><string>1.3.0</string>
+  <key>CFBundleVersion</key><string>4</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSMicrophoneUsageDescription</key><string>Dictation listens only while you hold the dictation key. Audio stays on this Mac.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Dictation turns what you say into text on this Mac.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsInWebContent</key><true/></dict>
 </dict>
 </plist>

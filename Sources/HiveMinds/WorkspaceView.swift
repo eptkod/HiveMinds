@@ -105,12 +105,15 @@ struct WorkspaceTabBar: View {
             if !isAgentOrBrowser {
                 TokenBadge(agents: store.agents.filter { $0.projectID == project.id }.map(\.id), scope: "every agent in this project")
                 Button {
-                    withAnimation(Motion.bouncy) { store.pinCanvas(in: project, [:]) }
+                    withAnimation(Motion.bouncy) {
+                        store.pinCanvas(in: project, [:])
+                        store.groupCanvas(in: project, [:])
+                    }
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
                 .buttonStyle(.borderless)
-                .disabled(store.canvasPins[project.id, default: [:]].isEmpty)
+                .disabled(store.canvasPins[project.id, default: [:]].isEmpty && store.canvasGroups[project.id, default: [:]].isEmpty)
                 .help("Put every tile back to its automatic size and place")
             }
 
@@ -245,7 +248,9 @@ struct CanvasView: View {
         } else {
             TileGrid(items: items, pins: store.canvasPins[project.id] ?? [:],
                      onReorder: { store.reorderCanvas(in: project.id, $0) },
-                     onPin: { store.pinCanvas(in: project, $0) }) { id, isDragged, drag in
+                     onPin: { store.pinCanvas(in: project, $0) },
+                     groups: store.canvasGroups[project.id] ?? [:],
+                     onGroup: { store.groupCanvas(in: project, $0) }) { id, isDragged, drag in
                 if let agent = store.agent(id) {
                     AgentTile(agent: agent, isDragged: isDragged, drag: drag)
                 } else if let tab = store.browserTab(id) {
@@ -271,13 +276,15 @@ struct AgentTile<Drag: Gesture>: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 StatusDot(status: s.status, size: 7)
-                Text(agent.title).font(.callout.weight(.medium)).lineLimit(1)
+                Text(agent.title).font(.callout.weight(.medium)).lineLimit(1).layoutPriority(1)
                 Text(s.activity)
                     .font(.caption)
                     .foregroundStyle(s.status == .needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
                     .lineLimit(1)
+                    .shownInTiles(from: 460)
                 Spacer(minLength: 6)
-                TokenBadge(agents: [agent.id])
+                TokenBadge(agents: [agent.id]).shownInTiles(from: 380)
+                ChangesButton(agent: agent).shownInTiles(from: 280)
                 Button { store.selection = .agent(agent.id) } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                 }
@@ -333,9 +340,10 @@ struct BrowserTile<Drag: Gesture>: View {
             HStack(spacing: 8) {
                 Image(systemName: "globe").font(.caption).foregroundStyle(.secondary)
                 Text(page.title.isEmpty ? (URL(string: page.url)?.host() ?? "New tab") : page.title)
-                    .font(.callout.weight(.medium)).lineLimit(1)
+                    .font(.callout.weight(.medium)).lineLimit(1).layoutPriority(1)
                 Text(URL(string: page.url)?.host() ?? "")
                     .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                    .shownInTiles(from: 360)
                 Spacer(minLength: 6)
                 Button {
                     if page.isLoading { page.webView.stopLoading() } else { page.webView.reload() }
@@ -430,8 +438,11 @@ extension View {
     }
 
     /// The faint card every tile sits on, lifted while it's dragged. `highlight` gives it an orange edge.
+    /// The tile takes the size it's given and is cut to the card, so nothing spills onto its neighbours.
     func tileChrome(isDragged: Bool, highlight: Bool) -> some View {
-        background(isDragged ? Color.black.opacity(0.85) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(isDragged ? Color.black.opacity(0.85) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background(Theme.surface.opacity(isDragged ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(highlight ? Color.orange.opacity(0.6) : Theme.hairline.opacity(isDragged ? 2 : 1),

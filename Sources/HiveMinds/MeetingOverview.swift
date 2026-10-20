@@ -512,13 +512,14 @@ struct MeetingTile<Drag: Gesture>: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: meeting.pattern.symbol).font(.caption).foregroundStyle(.secondary)
-                Text(meeting.title).font(.callout.weight(.medium)).lineLimit(1)
+                Text(meeting.title).font(.callout.weight(.medium)).lineLimit(1).layoutPriority(1)
                 Text(meetingProgress(meeting))
                     .font(.caption)
                     .foregroundStyle(needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
                     .lineLimit(1)
+                    .shownInTiles(from: 440)
                 Spacer(minLength: 6)
-                TokenBadge(agents: meeting.seats.map(\.agentID), scope: "this meeting")
+                TokenBadge(agents: meeting.seats.map(\.agentID), scope: "this meeting").shownInTiles(from: 400)
                 Button { store.openMeeting(meeting.id) } label: { Image(systemName: "rectangle.3.group") }
                     .buttonStyle(.borderless)
                     .help("Open the meeting room, with every seat's terminal")

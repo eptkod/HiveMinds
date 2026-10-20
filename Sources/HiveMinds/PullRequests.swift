@@ -110,6 +110,11 @@ extension AppStore {
         guard push.ok else { throw PRError("Couldn't push the branch to GitHub. \(push.message)") }
 
         if agent.pullRequest?.state != "OPEN" {
+            // Links the pull request to its issue, so merging it closes the issue.
+            var body = body
+            if let issue = agent.issue, !body.contains("#\(issue.number)") {
+                body += (body.isEmpty ? "" : "\n\n") + "Fixes #\(issue.number)"
+            }
             let bodyFile = FileManager.default.temporaryDirectory.appendingPathComponent("hiveminds-pr-\(UUID().uuidString).md")
             try? body.write(to: bodyFile, atomically: true, encoding: .utf8)
             defer { try? FileManager.default.removeItem(at: bodyFile) }

@@ -45,6 +45,8 @@ struct HiveMindsApp: App {
                     .disabled(store.waitingAgents.isEmpty)
                 Button("Overview") { store.mode = .agents; store.selection = .overview }
                     .keyboardShortcut("0")
+                Button("History") { store.mode = .agents; store.selection = .history }
+                    .keyboardShortcut("y")
                 Button("Canvas for This Project") {
                     if let id = store.currentProjectID { store.mode = .agents; store.selection = .project(id) }
                 }
@@ -92,6 +94,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         SidewaysScroll.install()
+        Dictation.shared.refresh()
+        #if DEBUG
+        _ = DictationTest.runIfRequested()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

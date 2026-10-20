@@ -26,11 +26,18 @@ enum DebugSnapshot {
             runTestAsk(store: store, path: path)
             return
         }
+        if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_ISSUE"] {
+            runTestIssue(store: store, path: path)
+            return
+        }
         guard let prefix = ProcessInfo.processInfo.environment["HIVEMINDS_SNAPSHOT"] else { return }
         var steps: [(String, () -> Void)] = [
             ("overview", { store.mode = .agents; store.selection = .overview }),
-            ("github", { store.mode = .github }),
+            ("github", { store.mode = .github; UserDefaults.standard.set("Repositories", forKey: SettingKey.githubTab) }),
+            ("github-issues", { UserDefaults.standard.set("Issues", forKey: SettingKey.githubTab) }),
+            ("github-repos", { UserDefaults.standard.set("Repositories", forKey: SettingKey.githubTab) }),
             ("meetings", { store.mode = .meetings }),
+            ("history", { store.mode = .agents; store.selection = .history }),
             ("newagent", { store.mode = .agents; store.selection = .overview; store.beginNewAgent(in: nil) }),
         ]
         steps.append(("settings", { store.showingNewAgent = false; if let menu = NSApp.mainMenu?.items.first?.submenu,
@@ -54,6 +61,20 @@ enum DebugSnapshot {
             steps.append(("workspace", { store.showingNewAgent = false; store.selection = .project(p.id) }))
             steps.append(("browser", { store.newBrowserTab(in: p.id, url: "https://example.com") }))
             steps.append(("canvas", { store.selection = .project(p.id) }))
+            // The smallest window with tiles pinned one cell wide, the way they could be sized before tiles
+            // had a smallest size: nothing should spill out of its card. Then the saved layout goes back.
+            let savedPins = store.canvasPins[p.id]
+            steps.append(("canvas-narrow", {
+                NSApp.windows.first { $0.isVisible && $0.title == "HiveMinds" }?.setContentSize(NSSize(width: 920, height: 580))
+                let pins = store.canvasItems(in: p).prefix(TilePin.columns).enumerated().map { i, id in
+                    (id, TilePin(col: i, row: 0, width: 1, height: TilePin.rows))
+                }
+                store.pinCanvas(in: p, Dictionary(uniqueKeysWithValues: pins))
+            }))
+            steps.append(("canvas-narrow-done", {
+                store.pinCanvas(in: p, savedPins ?? [:])
+                NSApp.windows.first { $0.isVisible && $0.title == "HiveMinds" }?.setContentSize(NSSize(width: 1260, height: 820))
+            }))
             steps.append(("shell", {
                 store.newShellTab(in: p.id)
                 if case .shell(let id) = store.selection {
@@ -83,6 +104,47 @@ enum DebugSnapshot {
             steps.append(("changes", { store.showingPalette = false; store.showingChanges = a }))
         }
         steps.append(("warning", { store.showingChanges = nil; store.warning = "\"Test agent\" has used about $10.42 at API prices (an estimate), past your $10.00 warning." }))
+        // The Canvas mid-gesture: the first tile held part way across by its title bar, a few positions along,
+        // then dropped; then its bottom-right corner dragged out and held, then let go. Synthetic mouse events
+        // don't reach SwiftUI's gestures, so `TileGridDebug` runs the same steps a drag does.
+        // Use a scratch `HIVEMINDS_SUPPORT_DIR`: the drop and resize are saved.
+        if let p = store.projects.first {
+            func hold(_ h: TileGridDebug.Hold?) { NotificationCenter.default.post(name: TileGridDebug.hold, object: h) }
+            steps.append(("drag-move", { store.showingNewAgent = false; store.mode = .agents; store.selection = .project(p.id)
+                for (i, t) in [0.1, 0.25, 0.45].enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + Double(i) * 0.4) { hold(.init(index: 0, by: CGSize(width: t, height: t * 0.6))) }
+                }
+            }))
+            steps.append(("drag-dropped", { hold(nil) }))
+            steps.append(("drag-resize", {
+                for (i, t) in [0.08, 0.16, 0.24].enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.4) { hold(.init(index: 0, by: CGSize(width: t, height: t), edges: [.bottom, .trailing])) }
+                }
+            }))
+            steps.append(("drag-resized", { hold(nil) }))
+            // A tile on the second page sized by its corner: it should move to the first page, where it stays.
+            steps.append(("drag-page2", { store.showingNewAgent = false; store.mode = .agents; store.selection = .project(p.id)
+                func find(_ v: NSView) -> PagerAnchor.View? { (v as? PagerAnchor.View) ?? v.subviews.lazy.compactMap(find).first }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first?.turn(1) }
+                let last = store.canvasItems(in: p).count - 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { hold(.init(index: last, by: CGSize(width: -0.2, height: 0.2), edges: [.top, .leading])) }
+            }))
+            steps.append(("drag-page2-done", { hold(nil) }))
+            // The first tile held at the right edge: after a moment the page turns and it lands on page 2.
+            steps.append(("drag-edge", { store.showingNewAgent = false; store.mode = .agents; store.selection = .project(p.id)
+                for (i, t) in [0.3, 0.6, 0.85].enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + Double(i) * 0.2) { hold(.init(index: 0, by: CGSize(width: t, height: 0.1))) }
+                }
+            }))
+            steps.append(("drag-edge-dropped", { hold(nil) }))
+            // Let go at the right edge straight away: it should still go to the next page.
+            steps.append(("drag-edge-quick", { if let pager = { () -> PagerAnchor.View? in
+                    func find(_ v: NSView) -> PagerAnchor.View? { (v as? PagerAnchor.View) ?? v.subviews.lazy.compactMap(find).first }
+                    return NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first }() { pager.turn(-5) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { hold(.init(index: 0, by: CGSize(width: 0.85, height: 0.1))) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { hold(nil) }
+            }))
+        }
         // `HIVEMINDS_SNAPSHOT_ONLY=canvas,meeting-tab` takes just those.
         if let only = ProcessInfo.processInfo.environment["HIVEMINDS_SNAPSHOT_ONLY"]?.split(separator: ",").map(String.init) {
             steps = steps.filter { only.contains($0.0) }
@@ -171,6 +233,40 @@ enum DebugSnapshot {
             try? await Task.sleep(for: .seconds(2))
             log("ASK-DONE \(store.state(id).activity)")
             if let a = store.agent(id) { await store.deleteAgent(a) }
+            exit(0)
+        }
+    }
+
+    /// `HIVEMINDS_TEST_ISSUE=/path/to/repo` starts a Haiku agent on a made-up issue in the background, the way
+    /// the Issues view does, and checks it does the work on its own branch without being opened.
+    private static func runTestIssue(store: AppStore, path: String) {
+        let project = store.addProject(path: path, repo: "eptkod/HiveMinds")
+        func log(_ s: String) { print(s); fflush(stdout) }
+        let issue = GitHubModel.Issue(number: 999, title: "Add a done file", body: "Create a file named `done.txt` containing `ok`.",
+                                      url: "https://github.com/eptkod/HiveMinds/issues/999", createdAt: Date(), updatedAt: Date(),
+                                      author: nil, labels: [], repo: "eptkod/HiveMinds")
+        Task {
+            do {
+                try await store.createAgent(projectID: project.id, provider: .claude, model: "haiku", access: .unrestricted, role: "",
+                                            task: AppStore.issuePrompt(issue, note: "Don't touch any other file."), ownBranch: true,
+                                            issue: issue.ref(), open: false)
+            } catch { log("ISSUE-FAIL \(error.localizedDescription)"); exit(1) }
+            guard let a = store.agents.last else { exit(1) }
+            log("ISSUE-STARTED branch=\(a.branch ?? "-") title=\(a.title) issue=\(a.issue?.number ?? 0) running=\(Terminals.shared.isRunning(a.id)) mode=\(store.mode.rawValue)")
+            let file = URL(fileURLWithPath: a.cwd).appendingPathComponent("done.txt").path
+            for _ in 0..<60 {
+                if store.state(a.id).status == .starting {
+                    Terminals.shared.sendKeys(a.id, "\u{1b}[B")
+                    try? await Task.sleep(for: .milliseconds(300))
+                    Terminals.shared.sendKeys(a.id, "\r")
+                }
+                if FileManager.default.fileExists(atPath: file) && store.state(a.id).status == .done { break }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            let git = store.tools.git ?? "/usr/bin/git"
+            let last = await Shell.run(git, ["log", "-1", "--format=%B"], cwd: a.cwd)
+            log("ISSUE-RESULT file=\(FileManager.default.fileExists(atPath: file)) status=\(store.state(a.id).status.rawValue) commit=\(last.out.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " | "))")
+            await store.deleteAgent(a)
             exit(0)
         }
     }

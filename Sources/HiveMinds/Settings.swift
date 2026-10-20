@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 /// Settings are stored in UserDefaults through @AppStorage, so they're kept when the app quits.
 enum SettingKey {
@@ -17,6 +18,11 @@ enum SettingKey {
     static let autoTitles = "agents.autoTitles"
     /// Estimated cost, in dollars, at which an agent gets a warning. 0 is off.
     static let costWarning = "agents.costWarning"
+    /// How many deleted agents the History page keeps, and for how many days.
+    static let historyLimit = "agents.historyLimit"
+    static let historyDays = "agents.historyDays"
+    /// Stop the display and Mac from sleeping while any agent is working.
+    static let keepAwake = "agents.keepAwake"
     static let meetingModel = "meetings.model"
     static let meetingSeats = "meetings.seats"
     static let meetingRounds = "meetings.rounds"
@@ -27,9 +33,19 @@ enum SettingKey {
     static let meetingSplitModels = "meetings.splitModels"
     static let meetingOtherModel = "meetings.otherModel"
     static let settingsTab = "settings.tab"
+    /// Which part of the GitHub page is showing: repositories or issues.
+    static let githubTab = "github.tab"
     static let projectsFolder = "projects.folder"
     static let soundsOn = "sounds.on"
     static let soundVolume = "sounds.volume"
+    static let voiceOn = "voice.on"
+    static let voiceEngine = "voice.engine"
+    static let voiceKey = "voice.key"
+    /// Hold the key while talking, or tap it to start and again to stop.
+    static let voiceHold = "voice.hold"
+    static let voiceLanguage = "voice.language"
+    static let voiceModel = "voice.model"
+    static let voiceVocabulary = "voice.vocabulary"
     /// Whether one kind of moment (permission, question, error, done) makes its sound.
     static func sound(_ cue: Cue) -> String { "sounds.\(cue.rawValue)" }
     /// How each provider signs in: "plan" or "apiKey". The key itself is in the Keychain.
@@ -51,6 +67,11 @@ enum SettingDefault {
     static let autoTitles = true
     static let costWarning = 10.0
     static let costWarningChoices: [Double] = [0, 1, 5, 10, 25, 50, 100]
+    static let historyLimit = 100
+    static let historyLimitChoices = [25, 50, 100, 250, 500]
+    static let historyDays = 7
+    static let historyDaysChoices = [1, 3, 7, 14, 30]
+    static let keepAwake = false
     static let meetingModel = "default"
     static let meetingSeats = 3
     static let meetingRounds = 2
@@ -65,6 +86,13 @@ enum SettingDefault {
     static let signIn = SignIn.plan.rawValue
     static let soundsOn = true
     static let soundVolume = 0.6
+    static let voiceOn = false
+    static let voiceEngine = VoiceEngine.apple.rawValue
+    static let voiceKey = VoiceKey.rightOption.rawValue
+    static let voiceHold = true
+    static let voiceLanguage = "auto"
+    static let voiceModel = "base.en"
+    static let voiceVocabulary = ""
     static let sound = true
 }
 
@@ -79,6 +107,8 @@ enum AgentDefaults {
     static var role: String { d.string(forKey: SettingKey.defaultRole) ?? SettingDefault.defaultRole }
     static var autoTitles: Bool { d.object(forKey: SettingKey.autoTitles) as? Bool ?? SettingDefault.autoTitles }
     static var costWarning: Double { d.object(forKey: SettingKey.costWarning) as? Double ?? SettingDefault.costWarning }
+    static var historyLimit: Int { d.object(forKey: SettingKey.historyLimit) as? Int ?? SettingDefault.historyLimit }
+    static var historyDays: Int { d.object(forKey: SettingKey.historyDays) as? Int ?? SettingDefault.historyDays }
 }
 
 /// Where projects downloaded from GitHub go: `<folder>/<repo>`, or `<folder>/<owner>-<repo>` if that name is taken.
@@ -200,6 +230,9 @@ struct SettingsView: View {
             Tab("Sounds", systemImage: "speaker.wave.2", value: "sounds") {
                 SoundSettings()
             }
+            Tab("Voice", systemImage: "mic", value: "voice") {
+                VoiceSettings()
+            }
             Tab("Projects", systemImage: "folder", value: "projects") {
                 ProjectSettings()
             }
@@ -279,11 +312,16 @@ struct AgentSettings: View {
     @AppStorage(SettingKey.defaultRole) private var role = SettingDefault.defaultRole
     @AppStorage(SettingKey.autoTitles) private var autoTitles = SettingDefault.autoTitles
     @AppStorage(SettingKey.costWarning) private var costWarning = SettingDefault.costWarning
+    @AppStorage(SettingKey.historyLimit) private var historyLimit = SettingDefault.historyLimit
+    @AppStorage(SettingKey.historyDays) private var historyDays = SettingDefault.historyDays
+    @AppStorage(SettingKey.keepAwake) private var keepAwake = SettingDefault.keepAwake
 
     private var isDefault: Bool {
         provider == SettingDefault.defaultProvider && model == SettingDefault.defaultModel
             && effort == SettingDefault.defaultEffort && ownBranch == SettingDefault.ownBranch && access == SettingDefault.defaultAccess && role == SettingDefault.defaultRole
             && autoTitles == SettingDefault.autoTitles && costWarning == SettingDefault.costWarning
+            && historyLimit == SettingDefault.historyLimit && historyDays == SettingDefault.historyDays
+            && keepAwake == SettingDefault.keepAwake
     }
 
     private var costExplainer: String {
@@ -348,6 +386,29 @@ struct AgentSettings: View {
                 }
             } header: {
                 Text("Chats")
+            }
+
+            Section {
+                SettingRow(explainer: "Your display won't turn off and your Mac won't sleep while any agent is working, even if you leave it alone. Normal sleep comes back once they're all finished or waiting on you.") {
+                    Toggle("Stay awake while agents work", isOn: $keepAwake)
+                }
+            } header: {
+                Text("Sleep")
+            }
+
+            Section {
+                SettingRow(explainer: "The History page keeps this many deleted agents. The oldest go first.") {
+                    Picker("Keep up to", selection: $historyLimit) {
+                        ForEach(SettingDefault.historyLimitChoices, id: \.self) { Text("\($0) agents").tag($0) }
+                    }
+                }
+                SettingRow(explainer: "Deleted agents leave the History page this long after they were deleted. Agents you still have are always shown.") {
+                    Picker("Keep for", selection: $historyDays) {
+                        ForEach(SettingDefault.historyDaysChoices, id: \.self) { Text($0 == 1 ? "1 day" : "\($0) days").tag($0) }
+                    }
+                }
+            } header: {
+                Text("History")
             } footer: {
                 HStack {
                     Spacer()
@@ -360,6 +421,9 @@ struct AgentSettings: View {
                         role = SettingDefault.defaultRole
                         autoTitles = SettingDefault.autoTitles
                         costWarning = SettingDefault.costWarning
+                        historyLimit = SettingDefault.historyLimit
+                        historyDays = SettingDefault.historyDays
+                        keepAwake = SettingDefault.keepAwake
                     }
                     .disabled(isDefault)
                 }
@@ -369,6 +433,9 @@ struct AgentSettings: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: historyLimit) { store.history.trim() }
+        .onChange(of: historyDays) { store.history.trim() }
+        .onChange(of: keepAwake) { KeepAwake.apply() }
     }
 }
 
@@ -531,6 +598,138 @@ private struct CueRow: View {
                 .help("Play this sound")
                 Spacer()
                 Toggle(cue.label, isOn: $enabled).labelsHidden()
+            }
+        }
+    }
+}
+
+/// Push-to-talk dictation. Off by default; turning it off stops everything, and the models can be deleted here.
+struct VoiceSettings: View {
+    @AppStorage(SettingKey.voiceOn) private var on = SettingDefault.voiceOn
+    @AppStorage(SettingKey.voiceEngine) private var engine = SettingDefault.voiceEngine
+    @AppStorage(SettingKey.voiceKey) private var key = SettingDefault.voiceKey
+    @AppStorage(SettingKey.voiceHold) private var hold = SettingDefault.voiceHold
+    @AppStorage(SettingKey.voiceLanguage) private var language = SettingDefault.voiceLanguage
+    @AppStorage(SettingKey.voiceModel) private var modelID = SettingDefault.voiceModel
+    @AppStorage(SettingKey.voiceVocabulary) private var vocabulary = SettingDefault.voiceVocabulary
+    @State private var confirming: WhisperModel?
+    @State private var mic = AVCaptureDevice.authorizationStatus(for: .audio)
+    private var models: WhisperModels { WhisperModels.shared }
+
+    private var keyChoice: VoiceKey { VoiceKey(rawValue: key) ?? .rightOption }
+    private var model: WhisperModel { WhisperModel.all.first { $0.id == modelID } ?? WhisperModel.all[0] }
+    private var usesWhisper: Bool { engine == VoiceEngine.whisper.rawValue }
+
+    var body: some View {
+        Form {
+            Section {
+                SettingRow(explainer: "Hold a key and talk; when you let go, what you said is typed into the terminal or text field you're in. Audio stays on this Mac and is never saved.") {
+                    Toggle("Dictation", isOn: $on)
+                }
+                if on {
+                    SettingRow(explainer: keyChoice.explainer) {
+                        Picker("Key", selection: $key) {
+                            ForEach(VoiceKey.allCases) { Text($0.label).tag($0.rawValue) }
+                        }
+                    }
+                    SettingRow(explainer: hold
+                               ? "Talk while the key is down. Esc cancels."
+                               : "Tap the key to start, tap it again to stop. Esc cancels.") {
+                        Picker("Key works by", selection: $hold) {
+                            Text("Holding it").tag(true)
+                            Text("Tapping on and off").tag(false)
+                        }
+                    }
+                    SettingRow(explainer: mic == .denied || mic == .restricted
+                               ? "HiveMinds isn't allowed to use the microphone. Turn it on in Privacy & Security."
+                               : mic == .authorized ? "Allowed." : "macOS asks the first time you press the key.") {
+                        HStack {
+                            Text("Microphone")
+                            Spacer()
+                            if mic == .denied || mic == .restricted {
+                                Button("Open Privacy Settings") {
+                                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                                }
+                            } else {
+                                Text(mic == .authorized ? "On" : "Not asked yet").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Dictation")
+            } footer: {
+                // Shown even with dictation off, so the downloads are always one click from gone.
+                if models.installedBytes > 0 {
+                    HStack {
+                        Text("Whisper models use \(ByteCountFormatter.string(fromByteCount: models.installedBytes, countStyle: .file)).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Remove Whisper Models", role: .destructive) { models.removeAll() }
+                    }
+                    .padding(.top, 8)
+                }
+            }
+
+            if on {
+                Section {
+                    SettingRow(explainer: (VoiceEngine(rawValue: engine) ?? .apple).explainer) {
+                        Picker("Speech engine", selection: $engine) {
+                            ForEach(VoiceEngine.allCases) { Text($0.label).tag($0.rawValue) }
+                        }
+                    }
+                    if usesWhisper { whisperModelRow }
+                    SettingRow(explainer: usesWhisper && model.englishOnly && language != "en" && language != "auto"
+                               ? "This model only knows English. Pick \"Base, many languages\" to dictate in another language."
+                               : "The language you speak.") {
+                        Picker("Language", selection: $language) {
+                            ForEach(VoiceLanguage.choices, id: \.code) { Text($0.label).tag($0.code) }
+                        }
+                    }
+                    SettingRow(explainer: "Names and jargon it should expect, separated by commas, e.g. SwiftUI, HiveMinds, Store.swift.") {
+                        TextField("Words to listen for", text: $vocabulary, prompt: Text("None"))
+                    }
+                } header: {
+                    Text("Speech")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: on, initial: true) { _, _ in
+            Dictation.shared.refresh()
+            mic = AVCaptureDevice.authorizationStatus(for: .audio)
+        }
+        .onChange(of: engine) { _, new in if new != VoiceEngine.whisper.rawValue { WhisperHelper.shared.stop() } }
+        .confirmationDialog("Download the \(confirming?.label ?? "") model?", isPresented: Binding(
+            get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
+            Button("Download \(confirming?.megabytes ?? 0) MB") { if let m = confirming { models.download(m) } }
+        } message: {
+            Text("It comes from huggingface.co/ggerganov/whisper.cpp and is checked against a known checksum. It's saved in Application Support/HiveMinds/Voice, and you can remove it here any time.")
+        }
+    }
+
+    @ViewBuilder private var whisperModelRow: some View {
+        let progress = models.progress[model.id]
+        SettingRow(explainer: WhisperModels.helper == nil
+                   ? "This copy of HiveMinds was built without the Whisper helper. Rebuild with scripts/build-app.sh to use Whisper."
+                   : models.failure[model.id]
+                   ?? (models.isInstalled(model) ? "Downloaded. Runs on this Mac only." : "\(model.megabytes) MB, downloaded once.")) {
+            HStack {
+                Picker("Model", selection: $modelID) {
+                    ForEach(WhisperModel.all) { Text($0.label).tag($0.id) }
+                }
+                if let progress {
+                    ProgressView(value: progress).frame(width: 80)
+                    Button("Cancel") { models.cancel(model) }
+                } else if models.isInstalled(model) {
+                    Button("Remove") { models.remove(model) }
+                } else {
+                    Button("Download…") { confirming = model }
+                        .disabled(WhisperModels.helper == nil)
+                }
             }
         }
     }
