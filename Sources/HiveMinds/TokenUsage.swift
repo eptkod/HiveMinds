@@ -30,6 +30,9 @@ final class SpendModel {
     /// Every agent's history, deleted ones included.
     var allHistory: UsageHistory { histories.values.reduce(archived, +) }
 
+    /// Called with an agent's estimated cost before and after it changes.
+    @ObservationIgnored var onCostChange: ((UUID, Double, Double) -> Void)?
+
     let file: URL
     private let archiveFile: URL
     private let statusFile: (UUID) -> URL
@@ -92,8 +95,10 @@ final class SpendModel {
             entry.transcripts.append(path)
         }
         if entry != entries[id] {
+            let old = entries[id]?.totalCost ?? 0
             entries[id] = entry
             save()
+            if entry.totalCost != old { onCostChange?(id, old, entry.totalCost) }
         }
         countTokens(id)
     }

@@ -15,13 +15,23 @@ enum SettingKey {
     static let defaultAccess = "agents.defaultAccess"
     static let defaultRole = "agents.defaultRole"
     static let autoTitles = "agents.autoTitles"
+    /// Estimated cost, in dollars, at which an agent gets a warning. 0 is off.
+    static let costWarning = "agents.costWarning"
     static let meetingModel = "meetings.model"
     static let meetingSeats = "meetings.seats"
     static let meetingRounds = "meetings.rounds"
     static let meetingAcceptEdits = "meetings.acceptEdits"
     static let meetingCommit = "meetings.commit"
+    static let meetingOutcomeFolder = "meetings.outcomeFolder"
+    static let meetingEndEarly = "meetings.endEarly"
+    static let meetingSplitModels = "meetings.splitModels"
+    static let meetingOtherModel = "meetings.otherModel"
     static let settingsTab = "settings.tab"
     static let projectsFolder = "projects.folder"
+    static let soundsOn = "sounds.on"
+    static let soundVolume = "sounds.volume"
+    /// Whether one kind of moment (permission, question, error, done) makes its sound.
+    static func sound(_ cue: Cue) -> String { "sounds.\(cue.rawValue)" }
     /// How each provider signs in: "plan" or "apiKey". The key itself is in the Keychain.
     static func signIn(_ provider: Provider) -> String { "signIn.\(provider.rawValue)" }
 }
@@ -39,14 +49,23 @@ enum SettingDefault {
     static let defaultAccess = Access.auto.rawValue
     static let defaultRole = ""
     static let autoTitles = true
+    static let costWarning = 10.0
+    static let costWarningChoices: [Double] = [0, 1, 5, 10, 25, 50, 100]
     static let meetingModel = "default"
     static let meetingSeats = 3
     static let meetingRounds = 2
     static let meetingAcceptEdits = true
     static let meetingCommit = true
+    static let meetingOutcomeFolder = "meetings"
+    static let meetingEndEarly = true
+    static let meetingSplitModels = false
+    static let meetingOtherModel = "sonnet"
     /// Empty until the first GitHub download asks for a folder.
     static let projectsFolder = ""
     static let signIn = SignIn.plan.rawValue
+    static let soundsOn = true
+    static let soundVolume = 0.6
+    static let sound = true
 }
 
 /// The agent settings as plain values, for code outside a view (the New Agent sheet, the store).
@@ -59,6 +78,7 @@ enum AgentDefaults {
     static var ownBranch: Bool { d.object(forKey: SettingKey.ownBranch) as? Bool ?? SettingDefault.ownBranch }
     static var role: String { d.string(forKey: SettingKey.defaultRole) ?? SettingDefault.defaultRole }
     static var autoTitles: Bool { d.object(forKey: SettingKey.autoTitles) as? Bool ?? SettingDefault.autoTitles }
+    static var costWarning: Double { d.object(forKey: SettingKey.costWarning) as? Double ?? SettingDefault.costWarning }
 }
 
 /// Where projects downloaded from GitHub go: `<folder>/<repo>`, or `<folder>/<owner>-<repo>` if that name is taken.
@@ -109,7 +129,7 @@ struct WindowAppearance: ViewModifier {
         content
             .containerBackground(Color.black.opacity(clampedOpacity), for: .window)
             .background(WindowConfigurator(blur: Int(blur.rounded())))
-            .onChange(of: opacity, initial: true) { _, _ in Terminals.shared.applyAppearance() }
+            .onChange(of: opacity, initial: true) { _, _ in Terminals.shared.applyAppearance(); Shells.shared.applyAppearance() }
     }
 
     private var clampedOpacity: Double {
@@ -176,6 +196,9 @@ struct SettingsView: View {
             }
             Tab("Meetings", systemImage: "bubble.left.and.bubble.right", value: "meetings") {
                 MeetingSettings()
+            }
+            Tab("Sounds", systemImage: "speaker.wave.2", value: "sounds") {
+                SoundSettings()
             }
             Tab("Projects", systemImage: "folder", value: "projects") {
                 ProjectSettings()
@@ -255,11 +278,18 @@ struct AgentSettings: View {
     @AppStorage(SettingKey.defaultAccess) private var access = SettingDefault.defaultAccess
     @AppStorage(SettingKey.defaultRole) private var role = SettingDefault.defaultRole
     @AppStorage(SettingKey.autoTitles) private var autoTitles = SettingDefault.autoTitles
+    @AppStorage(SettingKey.costWarning) private var costWarning = SettingDefault.costWarning
 
     private var isDefault: Bool {
         provider == SettingDefault.defaultProvider && model == SettingDefault.defaultModel
             && effort == SettingDefault.defaultEffort && ownBranch == SettingDefault.ownBranch && access == SettingDefault.defaultAccess && role == SettingDefault.defaultRole
-            && autoTitles == SettingDefault.autoTitles
+            && autoTitles == SettingDefault.autoTitles && costWarning == SettingDefault.costWarning
+    }
+
+    private var costExplainer: String {
+        if store.tools.claude == nil { return "Usage unavailable: cost estimates come from Claude Code, which isn't installed." }
+        if costWarning == 0 { return "Off. You won't be warned about what an agent costs." }
+        return "Shows a warning once when an agent passes this, at Claude API prices. It's an estimate, nothing is paused, and Codex agents aren't counted."
     }
 
     var body: some View {
@@ -308,6 +338,14 @@ struct AgentSettings: View {
                 SettingRow(explainer: "Claude Haiku writes a short title from each chat's first request. Uses a little of your Claude plan. When off, the title is the start of the request.") {
                     Toggle("Name chats automatically", isOn: $autoTitles)
                 }
+                SettingRow(explainer: costExplainer) {
+                    Picker("Warn when an agent costs", selection: $costWarning) {
+                        ForEach(SettingDefault.costWarningChoices, id: \.self) { v in
+                            Text(v == 0 ? "Off" : "$\(Int(v))").tag(v)
+                        }
+                    }
+                    .disabled(store.tools.claude == nil)
+                }
             } header: {
                 Text("Chats")
             } footer: {
@@ -321,6 +359,7 @@ struct AgentSettings: View {
                         access = SettingDefault.defaultAccess
                         role = SettingDefault.defaultRole
                         autoTitles = SettingDefault.autoTitles
+                        costWarning = SettingDefault.costWarning
                     }
                     .disabled(isDefault)
                 }
@@ -333,6 +372,11 @@ struct AgentSettings: View {
     }
 }
 
+/// The Claude models to pick from, for meeting model pickers.
+@ViewBuilder var modelOptions: some View {
+    ForEach(Provider.claude.models, id: \.self) { Text($0 == "default" ? "Default" : $0.capitalized).tag($0) }
+}
+
 /// What a new meeting starts with. The New Meeting sheet opens with these.
 struct MeetingSettings: View {
     @AppStorage(SettingKey.meetingModel) private var model = SettingDefault.meetingModel
@@ -340,18 +384,32 @@ struct MeetingSettings: View {
     @AppStorage(SettingKey.meetingRounds) private var rounds = SettingDefault.meetingRounds
     @AppStorage(SettingKey.meetingAcceptEdits) private var acceptEdits = SettingDefault.meetingAcceptEdits
     @AppStorage(SettingKey.meetingCommit) private var commit = SettingDefault.meetingCommit
+    @AppStorage(SettingKey.meetingOutcomeFolder) private var outcomeFolder = SettingDefault.meetingOutcomeFolder
+    @AppStorage(SettingKey.meetingEndEarly) private var endEarly = SettingDefault.meetingEndEarly
+    @AppStorage(SettingKey.meetingSplitModels) private var splitModels = SettingDefault.meetingSplitModels
+    @AppStorage(SettingKey.meetingOtherModel) private var otherModel = SettingDefault.meetingOtherModel
 
     private var isDefault: Bool {
         model == SettingDefault.meetingModel && seats == SettingDefault.meetingSeats && rounds == SettingDefault.meetingRounds
             && acceptEdits == SettingDefault.meetingAcceptEdits && commit == SettingDefault.meetingCommit
+            && outcomeFolder == SettingDefault.meetingOutcomeFolder && endEarly == SettingDefault.meetingEndEarly
+            && splitModels == SettingDefault.meetingSplitModels && otherModel == SettingDefault.meetingOtherModel
     }
 
     var body: some View {
         Form {
             Section {
-                SettingRow(explainer: "The model every seat at the table uses. Meetings run several sessions at once, so they use more of your plan.") {
-                    Picker("Model", selection: $model) {
-                        ForEach(Provider.claude.models, id: \.self) { Text($0 == "default" ? "Default" : $0.capitalized).tag($0) }
+                SettingRow(explainer: splitModels
+                           ? "The model of the seat that runs the meeting: the chair, lead, head or red."
+                           : "The model every seat at the table uses. Meetings run several sessions at once, so they use more of your plan.") {
+                    Picker(splitModels ? "Lead seat's model" : "Model", selection: $model) { modelOptions }
+                }
+                SettingRow(explainer: "Lets the seat that runs the meeting use a stronger model than the rest of the table, e.g. Fable to chair and Opus or Sonnet to debate. A cheaper model for the rest saves tokens.") {
+                    Toggle("Use a different model for the other seats", isOn: $splitModels.animation())
+                }
+                if splitModels {
+                    SettingRow(explainer: "The model every other seat uses: debaters, team members, mappers, blue and reviewers.") {
+                        Picker("Other seats' model", selection: $otherModel) { modelOptions }
                     }
                 }
                 SettingRow(explainer: "How many agents sit at the table. Red / blue always has two.") {
@@ -360,16 +418,22 @@ struct MeetingSettings: View {
                 SettingRow(explainer: "Rounds of critique, review or attack, for the formats that have them.") {
                     Stepper("Rounds: \(rounds)", value: $rounds, in: 1...4)
                 }
+                SettingRow(explainer: "Skips the remaining rounds once the seats agree, the lead has nothing left to change, or red finds nothing. Saves tokens.") {
+                    Toggle("End early when settled", isOn: $endEarly)
+                }
             } header: {
                 Text("New meetings")
             }
 
             Section {
-                SettingRow(explainer: "Seats write their notes and code without stopping to ask each time. They still ask before running commands.") {
+                SettingRow(explainer: "Seats use the access level from Settings > Agents. This only matters on Manual review: seats then write files without asking, but still ask before running commands.") {
                     Toggle("Let agents edit files without asking", isOn: $acceptEdits)
                 }
                 SettingRow(explainer: "Meetings in a git project run on their own branch. When one finishes, its outcome and changes are committed there. Nothing is pushed.") {
                     Toggle("Commit the outcome", isOn: $commit)
+                }
+                SettingRow(explainer: "Each meeting's outcome is saved here, inside the project's folder, named by date and topic.") {
+                    TextField("Outcome folder", text: $outcomeFolder, prompt: Text(SettingDefault.meetingOutcomeFolder))
                 }
             } header: {
                 Text("While they run")
@@ -382,6 +446,10 @@ struct MeetingSettings: View {
                         rounds = SettingDefault.meetingRounds
                         acceptEdits = SettingDefault.meetingAcceptEdits
                         commit = SettingDefault.meetingCommit
+                        outcomeFolder = SettingDefault.meetingOutcomeFolder
+                        endEarly = SettingDefault.meetingEndEarly
+                        splitModels = SettingDefault.meetingSplitModels
+                        otherModel = SettingDefault.meetingOtherModel
                     }
                     .disabled(isDefault)
                 }
@@ -391,6 +459,80 @@ struct MeetingSettings: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Which moments make a sound, and how loud. Each kind has its own sound so you know what happened without looking.
+struct SoundSettings: View {
+    @AppStorage(SettingKey.soundsOn) private var on = SettingDefault.soundsOn
+    @AppStorage(SettingKey.soundVolume) private var volume = SettingDefault.soundVolume
+
+    var body: some View {
+        Form {
+            Section {
+                SettingRow(explainer: "Plays a short sound when an agent needs you or something happens. Each kind has its own sound.") {
+                    Toggle("Play sounds", isOn: $on)
+                }
+                if on {
+                    SettingSlider(title: "Volume",
+                                  explainer: "Relative to your Mac's volume.",
+                                  value: $volume, range: 0.1...1,
+                                  lowIcon: "speaker", highIcon: "speaker.wave.3",
+                                  valueText: "\(Int((volume * 100).rounded()))%")
+                }
+            } header: {
+                Text("Sounds")
+            }
+
+            if on {
+                Section {
+                    ForEach(Cue.allCases) { CueRow(cue: $0) }
+                } header: {
+                    Text("When an agent…")
+                } footer: {
+                    HStack {
+                        Spacer()
+                        Button("Restore Defaults") {
+                            on = SettingDefault.soundsOn
+                            volume = SettingDefault.soundVolume
+                            for cue in Cue.allCases { UserDefaults.standard.removeObject(forKey: SettingKey.sound(cue)) }
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// One kind of moment: a switch, a button to hear it, and what it sounds like.
+private struct CueRow: View {
+    let cue: Cue
+    @AppStorage private var enabled: Bool
+
+    init(cue: Cue) {
+        self.cue = cue
+        _enabled = AppStorage(wrappedValue: SettingDefault.sound, SettingKey.sound(cue))
+    }
+
+    var body: some View {
+        SettingRow(explainer: cue.explainer) {
+            HStack {
+                Text(cue.label)
+                Button {
+                    Sounds.play(cue, preview: true)
+                } label: {
+                    Image(systemName: "play.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Play this sound")
+                Spacer()
+                Toggle(cue.label, isOn: $enabled).labelsHidden()
+            }
+        }
     }
 }
 

@@ -177,13 +177,16 @@ struct PastOutcomesSidebar: View {
                     Button { store.openMeeting(m.id, tab: .outcome) } label: { entry(m) }
                         .buttonStyle(.squish)
                         .help("Open the outcome of \(m.title)")
+                        .contextMenu {
+                            Button("Show in Finder") { store.revealFile(m.outcomeURL) }
+                        }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 32)
         }
         .task(id: meetings.map(\.id)) {
-            let files = meetings.map { ($0.id, $0.outputURL) }
+            let files = meetings.map { ($0.id, $0.outcomeURL) }
             summaries = await Task.detached {
                 var found: [UUID: String] = [:]
                 for (id, url) in files {
@@ -277,6 +280,8 @@ struct NewMeetingSheet: View {
     @State private var seats = 3
     @State private var rounds = 2
     @State private var model = "default"
+    @State private var splitModels = false
+    @State private var otherModel = "sonnet"
     @State private var prNumber = ""
     @State private var openPRs: [(number: Int, title: String)] = []
     @State private var error: String?
@@ -331,15 +336,26 @@ struct NewMeetingSheet: View {
                     }
                 }
                 GridRow {
-                    Text("Model")
-                    Picker("Model", selection: $model) {
-                        ForEach(Provider.claude.models, id: \.self) { Text($0 == "default" ? "Default" : $0.capitalized).tag($0) }
+                    Text(splitModels ? "\(pattern.leadSeat)'s model" : "Model")
+                    HStack(spacing: 12) {
+                        Picker("Model", selection: $model) { modelOptions }
+                            .labelsHidden().fixedSize()
+                        Toggle("Different model for \(pattern.otherSeats.lowercased())", isOn: $splitModels.animation())
+                            .toggleStyle(.checkbox)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
-                    .labelsHidden().fixedSize()
+                }
+                if splitModels {
+                    GridRow {
+                        Text("\(pattern.otherSeats)' model")
+                        Picker("Other seats' model", selection: $otherModel) { modelOptions }
+                            .labelsHidden().fixedSize()
+                    }
                 }
             }
 
-            Text("At the table: " + pattern.seatNames(seats).joined(separator: ", "))
+            Text("At the table: " + tableLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let project, !project.isGitRepo, pattern.changesCode {
@@ -372,8 +388,18 @@ struct NewMeetingSheet: View {
             seats = MeetingDefaults.seats
             rounds = MeetingDefaults.rounds
             model = MeetingDefaults.model
+            splitModels = MeetingDefaults.splitModels
+            otherModel = MeetingDefaults.otherModel
         }
         .task(id: pattern == .review ? projectID : nil) { await loadPRs() }
+    }
+
+    /// Who's at the table, with each seat's model when they differ.
+    private var tableLine: String {
+        let names = pattern.seatNames(seats)
+        guard splitModels, otherModel != model else { return names.joined(separator: ", ") }
+        let label = { (m: String) in m == "default" ? "Default" : m.capitalized }
+        return "\(names[0]) (\(label(model))), " + names.dropFirst().joined(separator: ", ") + " (\(label(otherModel)))"
     }
 
     private var patternPicker: some View {
@@ -436,7 +462,8 @@ struct NewMeetingSheet: View {
             do {
                 try await store.startMeeting(projectID: projectID, pattern: pattern, topic: topic,
                                              seats: seats, rounds: pattern.usesRounds ? rounds : 1,
-                                             prNumber: pattern == .review ? pr : nil, model: model)
+                                             prNumber: pattern == .review ? pr : nil, model: model,
+                                             otherModel: splitModels ? otherModel : nil)
                 dismiss()
             } catch {
                 self.error = error.localizedDescription
@@ -522,9 +549,12 @@ struct MeetingRoomView: View {
                     Button { store.resumeMeeting(meeting.id) } label: { Image(systemName: "play.fill") }
                         .help("Resume from this step")
                 case .finished:
-                    Button { NSWorkspace.shared.open(meeting.outputURL) } label: { Image(systemName: "doc.text") }
+                    Button { NSWorkspace.shared.open(meeting.outcomeURL) } label: { Image(systemName: "doc.text") }
                         .help("Open the outcome in your usual editor")
-                        .disabled(!FileManager.default.fileExists(atPath: meeting.outputURL.path))
+                        .disabled(!FileManager.default.fileExists(atPath: meeting.outcomeURL.path))
+                    Button { store.revealFile(meeting.outcomeURL) } label: { Image(systemName: "magnifyingglass") }
+                        .help("Show the outcome in Finder")
+                        .disabled(!FileManager.default.fileExists(atPath: meeting.outcomeURL.path))
                     if meeting.pattern == .review, meeting.prNumber != nil {
                         Button { askingToPost = true } label: {
                             Image(systemName: meeting.posted ? "checkmark.bubble" : "text.bubble")
@@ -556,7 +586,9 @@ struct MeetingRoomView: View {
 
     private var table: some View {
         let ids = tableOrder
-        return TileGrid(items: ids, onReorder: { order in store.updateMeeting(meeting.id) { $0.tableOrder = order } }) { id, isDragged, drag in
+        return TileGrid(items: ids, pins: meeting.tablePins ?? [:],
+                        onReorder: { order in store.updateMeeting(meeting.id) { $0.tableOrder = order } },
+                        onPin: { pins in store.updateMeeting(meeting.id) { $0.tablePins = pins.isEmpty ? nil : pins } }) { id, isDragged, drag in
             if let agent = store.agent(id) {
                 SeatTile(meeting: meeting, agent: agent, isDragged: isDragged, drag: drag)
             }
@@ -606,7 +638,7 @@ struct MeetingTabBar: View {
                         }
                     }
                     if meeting.status == .finished || FileManager.default.fileExists(atPath: meeting.outputURL.path) {
-                        WorkspaceTab(selected: store.meetingTab == .outcome, namespace: selection, help: meeting.outputPath) {
+                        WorkspaceTab(selected: store.meetingTab == .outcome, namespace: selection, help: meeting.savedPath ?? meeting.outputPath) {
                             Image(systemName: "doc.text")
                             Text("Outcome")
                         } action: {
@@ -661,6 +693,10 @@ struct SeatTile<Drag: Gesture>: View {
                 .help("Open in its own tab")
             }
             .tileHeader(drag)
+
+            AskBar(agentID: agent.id)
+                .padding(.horizontal, 8)
+                .padding(.bottom, s.ask != nil && s.status == .needsYou ? 6 : 0)
 
             Group {
                 if s.status == .asleep || store.stopped.contains(agent.id) {
@@ -719,9 +755,21 @@ struct OutcomeView: View {
                     ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                         MarkdownLine(line: line)
                     }
+                    Divider().overlay(Theme.hairline).padding(.top, 16)
+                    HStack(spacing: 8) {
+                        Text(meeting.outcomeURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([meeting.outcomeURL]) }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                            .help("Open the folder with the outcome selected")
+                    }
                 } else {
                     Text(meeting.status == .finished
-                         ? "The outcome document isn't there. It may have been moved: \(meeting.outputPath)"
+                         ? "The outcome document isn't there. It may have been moved: \(meeting.savedPath ?? meeting.outputPath)"
                          : "The outcome shows here once the meeting has written it.")
                         .foregroundStyle(.secondary)
                 }
@@ -742,7 +790,7 @@ struct OutcomeView: View {
             }
         }
         .task(id: meeting.status) {
-            text = try? String(contentsOf: meeting.outputURL, encoding: .utf8)
+            text = try? String(contentsOf: meeting.outcomeURL, encoding: .utf8)
         }
     }
 }

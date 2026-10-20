@@ -27,11 +27,19 @@ struct HiveMindsApp: App {
                 Button("New Browser Tab") { if let id = store.currentProjectID { store.newBrowserTab(in: id) } }
                     .keyboardShortcut("t")
                     .disabled(store.currentProjectID == nil)
+                Button("New Shell Tab") { if let id = store.currentProjectID { store.newShellTab(in: id) } }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                    .disabled(store.currentProjectID == nil)
                 Button("Add Project Folder…") { store.chooseLocalFolder() }
                     .keyboardShortcut("o")
             }
             CloseTabCommand(store: store)
+            // ⌘P opens the palette, so there's no Print.
+            CommandGroup(replacing: .printItem) {}
             CommandMenu("Agents") {
+                Button("Go To…") { store.showingPalette.toggle() }
+                    .keyboardShortcut("p")
+                Divider()
                 Button("Go to Agent Who Needs You") { store.jumpToWaiting() }
                     .keyboardShortcut("j")
                     .disabled(store.waitingAgents.isEmpty)
@@ -83,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Lets `swift run` behave like a real app (Dock icon, focus) as well as the built .app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        SidewaysScroll.install()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

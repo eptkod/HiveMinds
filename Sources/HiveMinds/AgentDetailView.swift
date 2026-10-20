@@ -42,8 +42,24 @@ struct AgentDetailView: View {
                         }
                         .help(agent.pullRequest == nil ? "Open a pull request for its branch" : "Its pull request")
                     }
-                    Button { store.revealInFinder(agent.cwd) } label: { Image(systemName: "folder") }
-                        .help("Show its folder in Finder")
+                    Menu {
+                        Button("Show Changes…") { store.showingChanges = agent }
+                            .disabled(!store.canShowChanges(agent))
+                        Divider()
+                        Button("Show in Finder") { store.revealInFinder(agent.cwd) }
+                        OpenInMenu(path: agent.cwd)
+                        Button("Copy Folder Path") { copyToClipboard(agent.cwd) }
+                        if let branch = agent.branch {
+                            Button("Copy Branch Name") { copyToClipboard(branch) }
+                        }
+                        Divider()
+                        Menu("Restart With") { AgentMenu.RestartWith(agent: agent) }
+                            .disabled(!store.canRestartWith(agent))
+                    } label: { Image(systemName: "folder") }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Its changes and folder: open it in Finder or an editor, or copy its path or branch")
                     Button { store.restart(agent.id) } label: { Image(systemName: "arrow.clockwise") }
                         .help("Restart. Claude Code picks up the same conversation.")
                     if isStopped || s.status == .asleep {

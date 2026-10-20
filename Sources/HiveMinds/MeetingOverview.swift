@@ -407,6 +407,7 @@ private struct LiveFooter: View {
                 ForEach(meeting.seats, id: \.agentID) { seat in
                     if let turn = meeting.turns[seat.agentID], turn != .done {
                         let s = store.state(seat.agentID)
+                        let canAnswerHere = s.status == .needsYou && s.ask != nil
                         HStack(spacing: 8) {
                             StatusDot(status: s.status, size: 6)
                             Text(seat.name).font(.caption.weight(.medium)).foregroundStyle(seatColor(meeting.seatIndex(seat.agentID) ?? 0))
@@ -415,9 +416,9 @@ private struct LiveFooter: View {
                                 .foregroundStyle(turn == .stuck || s.status == .needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.tertiary))
                                 .lineLimit(1)
                             if turn == .stuck || s.status == .needsYou {
-                                Button("Open") { store.openMeeting(meeting.id, tab: .seat(seat.agentID)) }
+                                Button(canAnswerHere ? "Open Terminal" : "Open") { store.openMeeting(meeting.id, tab: .seat(seat.agentID)) }
                                     .buttonStyle(.borderless).font(.caption)
-                                    .help("Open its terminal to answer it")
+                                    .help(canAnswerHere ? "Answer below, or open its terminal" : "Open its terminal to answer it")
                             }
                             if turn == .stuck {
                                 Button("Count as Done") { store.markTurnDone(seat.agentID) }
@@ -425,6 +426,7 @@ private struct LiveFooter: View {
                                     .help("Move on without waiting for its notes file")
                             }
                         }
+                        AskBar(agentID: seat.agentID)
                     }
                 }
             }
@@ -591,9 +593,12 @@ struct MeetingOverviewPage: View {
                         Button { store.resumeMeeting(meeting.id) } label: { Image(systemName: "play.fill") }
                             .help("Resume from this step")
                     case .finished:
-                        Button { NSWorkspace.shared.open(meeting.outputURL) } label: { Image(systemName: "doc.text") }
+                        Button { NSWorkspace.shared.open(meeting.outcomeURL) } label: { Image(systemName: "doc.text") }
                             .help("Open the outcome in your usual editor")
-                            .disabled(!FileManager.default.fileExists(atPath: meeting.outputURL.path))
+                            .disabled(!FileManager.default.fileExists(atPath: meeting.outcomeURL.path))
+                        Button { store.revealFile(meeting.outcomeURL) } label: { Image(systemName: "magnifyingglass") }
+                            .help("Show the outcome in Finder")
+                            .disabled(!FileManager.default.fileExists(atPath: meeting.outcomeURL.path))
                     }
                 }
                 .buttonStyle(.borderless)

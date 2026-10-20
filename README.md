@@ -12,16 +12,17 @@
   <img src="branding/icon/icon-1024.png" alt="HiveMinds app icon" width="128">
 </p>
 
-HiveMinds is a personal remake of Agent Office with a minimal, OLED-black Liquid Glass interface. Every project gets a Canvas showing all of its agents' terminals and browser tabs at once, and agents can work on their own branches, open pull requests and hold meetings with each other.
+HiveMinds is a personal remake of Agent Office with a minimal, OLED-black Liquid Glass interface. Every project gets a Canvas showing all of its agents' terminals, browser tabs and shells at once, and agents can work on their own branches, open pull requests and hold meetings with each other.
 
 ## Features
 
 - **Projects and agents:** run many agents across many projects, each with a short title, a model, an effort level and an access level (Auto review, Manual review or Unrestricted).
-- **Canvas:** every agent terminal and browser tab in a project, side by side, usable in place. Drag tiles by their title bar to rearrange them.
+- **Canvas:** every agent terminal, browser tab and shell in a project, side by side, usable in place. Drag tiles by their title bar to rearrange them, and by any edge or corner to make one bigger (it snaps to a grid and the rest fill the space left).
 - **Own branches and pull requests:** an agent can work in its own git worktree. HiveMinds drafts the pull request and opens it with `gh` once you confirm.
+- **Review and jump around:** right-click an agent to see what it changed (a read-only diff), open its folder in your editor, copy its branch, or restart it with a different access level or model. Press ⌘P to jump to any project, agent, tab or meeting.
 - **Meetings:** several agents debate or review a topic in their own worktree and write up the outcome.
 - **GitHub in a couple of clicks:** sign in through the GitHub CLI, then clone repos into a projects folder you pick once.
-- **Usage at a glance:** the Claude plan's 5-hour and weekly limits, a token and cost estimate on every tab, and Overview charts of your activity.
+- **Usage at a glance:** the Claude plan's 5-hour and weekly limits, a token and cost estimate on every tab, a warning when an agent passes a cost you set, and Overview charts of your activity.
 - **Lightweight:** native SwiftUI, no idle animations, see-through black window with adjustable blur.
 
 ## Install
@@ -51,14 +52,14 @@ For development, `scripts/build-app.sh debug` builds a debug app. The build uses
 ## Where things live
 
 - Settings: Cmd+comma. Saved in UserDefaults (`com.ethan.hiveminds`), so they survive restarts.
-- App data: `~/Library/Application Support/HiveMinds/` holds `state.json` (projects, agents, browser tabs), the Claude settings files agents start with (`claude-hooks.json`, plus `claude-hooks-api-key.json` and `claude-api-key.json` for API-key sign-in), `statusline.sh` and `usage.json` for the plan usage meter, and per-agent event logs.
-- Project workspace: pick a project's "Canvas" row to see every agent's terminal and every browser tab at once, each usable in place (drag a tile by its title bar to move it). Tabs along the top switch between agents, browser tabs and meetings (Cmd+T for a new browser tab, Cmd+G for the Canvas). Each of the project's meetings shows on the Canvas as a chat of what its seats say and write, then its outcome once it's finished; its X only takes it off the Canvas.
+- App data: `~/Library/Application Support/HiveMinds/` holds `state.json` (projects, agents, browser and shell tabs), the Claude settings files agents start with (`claude-hooks.json`, plus `claude-hooks-api-key.json` and `claude-api-key.json` for API-key sign-in), `statusline.sh` and `usage.json` for the plan usage meter, and per-agent event logs.
+- Project workspace: pick a project's "Canvas" row to see every agent's terminal and every browser tab at once, each usable in place (drag a tile by its title bar to move it, or by any edge or corner to size it; double-click an edge to fit it automatically again). Tabs along the top switch between agents, browser tabs, shells and meetings (Cmd+T for a new browser tab, Shift+Cmd+T for a new shell in the project's folder, Cmd+G for the Canvas). Each of the project's meetings shows on the Canvas as a chat of what its seats say and write, then its outcome once it's finished; its X only takes it off the Canvas.
 - API keys: Settings > Accounts lets Claude Code and Codex each sign in with an API key instead of your plan. Keys are kept in the macOS Keychain ("HiveMinds API key"), never in a file.
 - Projects cloned from GitHub: `<projects folder>/<repo>`. HiveMinds asks for the folder the first time and remembers it; change it in Settings > Projects. An existing checkout (including Agent Office's) is reused.
 - Branding (logo, app icon, colours): `branding/`. Change `branding/scripts/render.swift`, run `branding/scripts/render.sh`, then rebuild the app.
 - Agents on their own branch: `<project>/.hiveminds/worktrees/<title-slug>-<id>`.
 - Pull requests: an agent on its own branch has a pull-request button in its header. It drafts a title and description, then pushes the branch and opens the PR with `gh` only when you confirm. PRs an agent opens itself are picked up after its turn ends.
-- Meetings (the Meetings switch in the toolbar, or Shift+Cmd+N): each runs in its own worktree, `<project>/.hiveminds/worktrees/meeting-<topic>-<id>` on branch `hive/meeting-…`. Turn notes go in `.hiveminds/meetings/<date>-<topic>/` inside it, and the outcome in `docs/decisions/<date>-<topic>.md` (a review panel's combined review stays in the notes folder). Meeting defaults are in Settings > Meetings.
+- Meetings (the Meetings switch in the toolbar, or Shift+Cmd+N): each runs in its own worktree, `<project>/.hiveminds/worktrees/meeting-<topic>-<id>` on branch `hive/meeting-…`. Turn notes go in `.hiveminds/meetings/<date>-<topic>/` inside it, and the outcome in `meetings/<date>-<topic>.md`, committed on the meeting's branch. When a meeting finishes, its outcome (a review panel's combined review too) is also saved in the project's own folder at `<project>/meetings/<date>-<topic>.md`; the folder is set in Settings > Meetings. Meeting defaults are in Settings > Meetings.
 - Usage history of deleted agents, kept for the Overview charts: `~/Library/Application Support/HiveMinds/history.json`.
 - Per-agent status line snapshots (cost and tokens, used for meeting totals): `~/Library/Application Support/HiveMinds/status/<agent id>.json`.
 - Token badges (tokens used and the API-price estimate, top right of every agent, meeting and Canvas header): code in `Sources/HiveMinds/TokenUsage.swift`. Each agent's cost and transcript paths are saved in `~/Library/Application Support/HiveMinds/spend.json`; tokens are counted from Claude Code's transcripts.

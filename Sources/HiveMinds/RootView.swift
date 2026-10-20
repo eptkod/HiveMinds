@@ -12,12 +12,16 @@ struct RootView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
-                    if let notice = store.notice {
+                    if let warning = store.warning {
+                        NoticeBar(text: warning, icon: "exclamationmark.triangle", tint: .orange) { store.warning = nil }
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else if let notice = store.notice {
                         NoticeBar(text: notice) { store.notice = nil }
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
                 .animation(Motion.bouncy, value: store.notice)
+                .animation(Motion.bouncy, value: store.warning)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -44,6 +48,29 @@ struct RootView: View {
                     .help("New Agent (⌘N)")
                 }
             }
+        }
+        .overlay(alignment: .top) {
+            if store.showingPalette {
+                ZStack(alignment: .top) {
+                    // Clicking anywhere else closes it.
+                    Color.black.opacity(0.001)
+                        .onTapGesture { store.showingPalette = false }
+                    CommandPalette()
+                        .padding(.top, 70)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
+        .animation(Motion.press, value: store.showingPalette)
+        .sheet(item: $store.showingChanges) { ChangesSheet(agent: $0) }
+        .confirmationDialog("Restart \(store.pendingRestart.map { "\"\($0.agent.title)\" \($0.what)" } ?? "the agent")?",
+                            isPresented: Binding(get: { store.pendingRestart != nil }, set: { if !$0 { store.pendingRestart = nil } }),
+                            presenting: store.pendingRestart) { r in
+            Button("Restart Agent") { store.confirmRestart(r) }
+        } message: { r in
+            Text(r.agent.provider == .claude
+                 ? "This restarts the agent. Claude Code picks up the same conversation."
+                 : "This restarts the agent. Codex starts a new conversation, so it won't remember this one.")
         }
         .sheet(isPresented: $store.showingNewAgent) { NewAgentSheet() }
         .sheet(isPresented: $store.showingNewMeeting) { NewMeetingSheet() }

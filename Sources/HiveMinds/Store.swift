@@ -6,8 +6,11 @@ final class AppStore {
     var projects: [Project] = []
     var agents: [Agent] = []
     var browserTabs: [BrowserTab] = []
+    var shellTabs: [ShellTab] = []
     /// Each project's tile order on its Canvas, agents and browser tabs mixed.
     var canvasOrder: [UUID: [UUID]] = [:]
+    /// Tiles you've sized by hand on each project's Canvas, by tile id. The rest fill the space left.
+    var canvasPins: [UUID: [UUID: TilePin]] = [:]
     var meetings: [Meeting] = []
     /// The meeting room that's open on the Meetings page, if any, and which of its tabs.
     var meetingSelection: UUID?
@@ -27,6 +30,13 @@ final class AppStore {
     var toolsChecked = false
     var errorMessage: String?
     var notice: String?
+    /// Like `notice`, but for something to watch out for, such as an agent passing the cost warning.
+    var warning: String?
+    /// The agent whose Changes sheet is open.
+    var showingChanges: Agent?
+    /// A new access level or model, waiting for you to confirm the restart.
+    var pendingRestart: PendingRestart?
+    var showingPalette = false
     /// Bumped to rebuild an agent's terminal pane after a restart.
     var terminalGeneration: [UUID: Int] = [:]
     /// Agents you stopped. They stay stopped until you start them, rather than starting again when shown.
@@ -73,6 +83,7 @@ final class AppStore {
         writeHooksFile()
         load()
         for a in agents where a.provider == .claude { spend.watch(a.id) }
+        spend.onCostChange = { [weak self] id, old, new in self?.checkCost(id, old, new) }
         Terminals.shared.store = self
     }
 
@@ -94,7 +105,9 @@ final class AppStore {
         var projects: [Project]
         var agents: [Agent]
         var browserTabs: [BrowserTab]?
+        var shellTabs: [ShellTab]?
         var canvasOrder: [UUID: [UUID]]?
+        var canvasPins: [UUID: [UUID: TilePin]]?
         var meetings: [Meeting]?
     }
 
@@ -104,7 +117,9 @@ final class AppStore {
         projects = saved.projects
         agents = saved.agents
         browserTabs = saved.browserTabs ?? []
+        shellTabs = saved.shellTabs ?? []
         canvasOrder = saved.canvasOrder ?? [:]
+        canvasPins = saved.canvasPins ?? [:]
         meetings = saved.meetings ?? []
         // Meetings that were running when the app quit wait for you to resume them.
         for i in meetings.indices where meetings[i].status == .running {
@@ -123,7 +138,7 @@ final class AppStore {
     func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(Saved(projects: projects, agents: agents, browserTabs: browserTabs, canvasOrder: canvasOrder, meetings: meetings)) {
+        if let data = try? enc.encode(Saved(projects: projects, agents: agents, browserTabs: browserTabs, shellTabs: shellTabs, canvasOrder: canvasOrder, canvasPins: canvasPins, meetings: meetings)) {
             try? data.write(to: stateFile, options: .atomic)
         }
     }
@@ -132,7 +147,7 @@ final class AppStore {
     /// started with. The app watches those files: no server, nothing listening on a port.
     private func writeHooksFile() {
         let command = #"[ -n "$HIVEMINDS_EVENTS" ] && { tr -d '\n' >> "$HIVEMINDS_EVENTS"; echo >> "$HIVEMINDS_EVENTS"; }; true"#
-        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "PermissionRequest", "SessionEnd"]
+        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "PermissionRequest", "StopFailure", "SessionEnd"]
         var hooks: [String: Any] = [:]
         for e in events { hooks[e] = [["hooks": [["type": "command", "command": command]]]] }
         writeStatusLineScript()
@@ -294,7 +309,10 @@ final class AppStore {
         if let id = meetingSelection, meeting(id) == nil { meetingSelection = nil }
         for t in browserTabs(in: project) { Browsers.close(t.id) }
         browserTabs.removeAll { $0.projectID == project.id }
+        for t in shellTabs(in: project) { Shells.shared.close(t.id) }
+        shellTabs.removeAll { $0.projectID == project.id }
         canvasOrder.removeValue(forKey: project.id)
+        canvasPins.removeValue(forKey: project.id)
         projects.removeAll { $0.id == project.id }
         selection = .overview
         save()
@@ -314,6 +332,7 @@ final class AppStore {
         case .agent(let id): agent(id)?.projectID
         case .project(let id): project(id)?.id
         case .browser(let id): browserTab(id)?.projectID
+        case .shell(let id): shellTab(id)?.projectID
         case .meeting(let id): meeting(id)?.projectID
         case .overview, nil: nil
         }
@@ -454,10 +473,10 @@ final class AppStore {
         save()
     }
 
-    /// What a project's Canvas shows, in order: its agents, browser tabs and meetings, by id.
+    /// What a project's Canvas shows, in order: its agents, browser tabs, shells and meetings, by id.
     /// Anything the saved order doesn't know yet goes at the end.
     func canvasItems(in project: Project) -> [UUID] {
-        let current = agents(in: project).map(\.id) + browserTabs(in: project).map(\.id) + canvasMeetings(in: project).map(\.id)
+        let current = agents(in: project).map(\.id) + browserTabs(in: project).map(\.id) + shellTabs(in: project).map(\.id) + canvasMeetings(in: project).map(\.id)
         let saved = canvasOrder[project.id, default: []].filter(current.contains)
         return saved + current.filter { !saved.contains($0) }
     }
@@ -471,6 +490,18 @@ final class AppStore {
         if mine.count == slots.count {
             for (slot, tab) in zip(slots, mine) { browserTabs[slot] = tab }
         }
+        let shellSlots = shellTabs.indices.filter { shellTabs[$0].projectID == projectID }
+        let myShells = order.compactMap { id in shellTabs.first { $0.id == id && $0.projectID == projectID } }
+        if myShells.count == shellSlots.count {
+            for (slot, tab) in zip(shellSlots, myShells) { shellTabs[slot] = tab }
+        }
+        save()
+    }
+
+    /// Saves which Canvas tiles have a size you picked. Ones that are gone are dropped.
+    func pinCanvas(in project: Project, _ pins: [UUID: TilePin]) {
+        let current = Set(canvasItems(in: project))
+        canvasPins[project.id] = pins.filter { current.contains($0.key) }
         save()
     }
 
@@ -495,7 +526,28 @@ final class AppStore {
         save()
     }
 
-    /// ⌘W: closes the open tab instead of the window. A browser tab closes; an agent tab steps back to
+    // MARK: Shell tabs
+
+    func shellTab(_ id: UUID) -> ShellTab? { shellTabs.first { $0.id == id } }
+    func shellTabs(in project: Project) -> [ShellTab] { shellTabs.filter { $0.projectID == project.id } }
+
+    func newShellTab(in projectID: UUID) {
+        let tab = ShellTab(projectID: projectID)
+        shellTabs.append(tab)
+        save()
+        mode = .agents
+        selection = .shell(tab.id)
+    }
+
+    func closeShellTab(_ id: UUID) {
+        guard let tab = shellTab(id) else { return }
+        Shells.shared.close(id)
+        shellTabs.removeAll { $0.id == id }
+        if selection == .shell(id) { selection = .project(tab.projectID) }
+        save()
+    }
+
+    /// ⌘W: closes the open tab instead of the window. A browser or shell tab closes; an agent tab steps back to
     /// the Canvas (the agent keeps running); a meeting seat or outcome steps back to the table, and the
     /// table back to the meeting list. Anywhere else it does nothing, so ⌘W never quits the app.
     func closeCurrentTab() {
@@ -503,6 +555,7 @@ final class AppStore {
         case .agents:
             switch selection {
             case .browser(let id): closeBrowserTab(id)
+            case .shell(let id): closeShellTab(id)
             case .agent(let id): if let agent = agent(id) { selection = .project(agent.projectID) }
             case .meeting(let id): if let m = meeting(id) { selection = .project(m.projectID) }
             default: break
@@ -527,22 +580,36 @@ final class AppStore {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
     }
 
+    /// Opens the file's folder in Finder with the file selected.
+    func revealFile(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     // MARK: Status
 
-    func setStatus(_ id: UUID, _ status: AgentStatus, _ activity: String? = nil) {
+    /// `cue` is the sound for an agent that starts needing you; it says why (permission, a question, an error).
+    func setStatus(_ id: UUID, _ status: AgentStatus, _ activity: String? = nil, cue: Cue = .question) {
         let old = state(id).status
         var s = state(id)
         s.status = status
+        if status != .needsYou { s.ask = nil }
         if let activity { s.activity = activity }
         s.updated = Date()
         live[id] = s
         if status == .needsYou && old != .needsYou {
-            NSSound(named: "Funk")?.play()
+            Sounds.play(cue)
             NSApp.requestUserAttention(.informationalRequest)
         } else if status == .done && old == .working && agent(id)?.meetingID == nil {
-            NSSound(named: "Glass")?.play()
+            Sounds.play(.done)
         }
         updateBadge()
+    }
+
+    /// Warns once when an agent's estimated cost passes the amount in Settings > Agents. It never pauses the agent.
+    private func checkCost(_ id: UUID, _ old: Double, _ new: Double) {
+        let limit = AgentDefaults.costWarning
+        guard limit > 0, old < limit, new >= limit, let agent = agent(id) else { return }
+        warning = "\"\(agent.title)\" has used about \(TokenBadge.money(new)) at API prices (an estimate), past your \(TokenBadge.money(limit)) warning."
     }
 
     private func updateBadge() {
@@ -572,18 +639,34 @@ final class AppStore {
             }
             setStatus(id, .working, prompt.isEmpty ? "Thinking" : "Asked: \(prompt.prefix(120))")
         case "PreToolUse":
-            setStatus(id, .working, describeTool(event))
+            if event["tool_name"] as? String == "AskUserQuestion" {
+                setStatus(id, .needsYou, "Has a question for you", cue: .question)
+                setAsk(id, .questions(AskQuestion.parse(event["tool_input"] as? [String: Any] ?? [:])))
+            } else {
+                setStatus(id, .working, describeTool(event))
+            }
         case "PermissionRequest":
             let tool = event["tool_name"] as? String ?? "a tool"
-            setStatus(id, .needsYou, "Wants permission to use \(tool)")
+            let input = event["tool_input"] as? [String: Any] ?? [:]
+            if tool == "AskUserQuestion" {
+                setStatus(id, .needsYou, "Has a question for you", cue: .question)
+                setAsk(id, .questions(AskQuestion.parse(input)))
+            } else {
+                setStatus(id, .needsYou, "Wants permission to use \(tool)", cue: .permission)
+                setAsk(id, .permission(tool: tool, detail: permissionDetail(tool, input)))
+            }
         case "Notification":
             let type = event["notification_type"] as? String ?? ""
             let message = event["message"] as? String ?? "Waiting for you"
             if type == "idle_prompt" {
                 if state(id).status == .working { setStatus(id, .needsYou, message) }
-            } else {
-                setStatus(id, .needsYou, message)
+            } else if state(id).activity != "Has a question for you" {
+                setStatus(id, .needsYou, message, cue: type == "permission_prompt" ? .permission : .question)
             }
+        case "StopFailure":
+            // The turn ended on an error (an API error, a rate limit, a lost connection) rather than finishing.
+            let error = (event["error"] as? String).map { $0.replacingOccurrences(of: "_", with: " ") } ?? "an error"
+            setStatus(id, .needsYou, "Stopped on \(error)", cue: .error)
         case "Stop":
             setStatus(id, .done, state(id).activity.hasPrefix("Asked:") ? "Finished" : "Finished · \(state(id).activity)")
             meetingTurnEnded(id)
@@ -594,6 +677,59 @@ final class AppStore {
         default:
             break
         }
+    }
+
+    private func setAsk(_ id: UUID, _ kind: PendingAsk.Kind) {
+        if case .questions(let q) = kind, q.isEmpty { return }
+        live[id, default: LiveState()].ask = PendingAsk(kind: kind)
+    }
+
+    /// What a permission prompt is about, as you'd want to check it: the command itself, or the file.
+    private func permissionDetail(_ tool: String, _ input: [String: Any]) -> String {
+        switch tool {
+        case "Bash": (input["command"] as? String) ?? describeToolUse(tool, input)
+        case "Edit", "MultiEdit", "Write", "Read", "NotebookEdit":
+            (input["file_path"] as? String ?? input["notebook_path"] as? String) ?? describeToolUse(tool, input)
+        case "WebFetch": (input["url"] as? String) ?? describeToolUse(tool, input)
+        default: describeToolUse(tool, input)
+        }
+    }
+
+    // MARK: Answering from a tile
+    // These press the same keys you would in the agent's terminal, so the terminal stays the one source of truth.
+
+    /// Says yes once to a permission prompt (its first option).
+    func allow(_ id: UUID) {
+        guard state(id).ask != nil else { return }
+        Terminals.shared.press(id, ["1"])
+        setStatus(id, .working, "Allowed")
+    }
+
+    /// Says no to a permission prompt or skips a question. Claude Code then waits for you to say what to do instead.
+    func decline(_ id: UUID) {
+        guard state(id).ask != nil else { return }
+        Terminals.shared.press(id, ["\u{1b}"])
+        setStatus(id, .idle, "You said no. Tell it what to do instead.")
+    }
+
+    /// Answers every question in an AskUserQuestion prompt: an option's index, or your own words.
+    func answer(_ id: UUID, _ answers: [QuestionAnswer]) {
+        guard case .questions(let questions)? = state(id).ask?.kind, answers.count == questions.count else { return }
+        var keys: [String] = []
+        for (q, a) in zip(questions, answers) {
+            switch a {
+            case .option(let i): keys.append("\(i + 1)")
+            case .text(let text):
+                // The option after the listed ones is "Type something".
+                keys.append("\(q.options.count + 1)")
+                keys.append(text.replacingOccurrences(of: "\n", with: " "))
+                keys.append("\r")
+            }
+        }
+        // With more than one question, Claude Code shows your answers and asks you to submit them.
+        if questions.count > 1 { keys.append("1") }
+        Terminals.shared.press(id, keys)
+        setStatus(id, .working, "Answered")
     }
 
     private func describeTool(_ e: [String: Any]) -> String {

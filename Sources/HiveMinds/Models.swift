@@ -141,8 +141,8 @@ struct Agent: Codable, Identifiable, Hashable {
     var model: String
     /// How hard it thinks. Nil for agents from before this setting existed.
     var effort: Effort?
-    /// What it may do without asking. Nil for agents from before this setting existed, and for
-    /// meeting seats, which follow the meeting settings instead.
+    /// What it may do without asking. Nil for agents from before this setting existed. Meeting seats
+    /// from before seats had their own level follow the default in Settings > Agents.
     var access: Access?
     /// Extra instructions appended to the agent's system prompt.
     var role: String
@@ -185,6 +185,44 @@ struct LiveState {
     var status: AgentStatus = .asleep
     var activity: String = ""
     var updated = Date()
+    /// What it stopped to ask, while it waits, so it can be answered from a tile.
+    var ask: PendingAsk?
+}
+
+/// A permission prompt or question an agent is waiting on, read from its hook event.
+struct PendingAsk: Identifiable {
+    let id = UUID()
+    var kind: Kind
+
+    enum Kind {
+        /// `detail` is what it wants to do: the command, or the file it wants to change.
+        case permission(tool: String, detail: String)
+        case questions([AskQuestion])
+    }
+}
+
+/// Your answer to one question: one of its options, or your own words.
+enum QuestionAnswer {
+    case option(Int)
+    case text(String)
+}
+
+/// One question from Claude Code's AskUserQuestion tool.
+struct AskQuestion {
+    var header: String
+    var question: String
+    var options: [String]
+    var multiSelect: Bool
+
+    /// The questions in an AskUserQuestion tool call's input.
+    static func parse(_ input: [String: Any]) -> [AskQuestion] {
+        (input["questions"] as? [[String: Any]] ?? []).compactMap { q in
+            guard let text = q["question"] as? String else { return nil }
+            let options = (q["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }
+            return AskQuestion(header: q["header"] as? String ?? "", question: text, options: options,
+                               multiSelect: q["multiSelect"] as? Bool ?? false)
+        }
+    }
 }
 
 enum Mode: String, CaseIterable, Identifiable {
@@ -198,6 +236,8 @@ enum SidebarItem: Hashable {
     case project(UUID)
     case agent(UUID)
     case browser(UUID)
+    /// A shell (terminal) open as a tab in a project's workspace.
+    case shell(UUID)
     /// A meeting's overview, opened as a tab in its project's workspace.
     case meeting(UUID)
 }
@@ -208,6 +248,12 @@ struct BrowserTab: Codable, Identifiable, Hashable {
     var projectID: UUID
     var url = ""
     var title = ""
+}
+
+/// A shell open as a tab in a project's workspace, started in the project's folder.
+struct ShellTab: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var projectID: UUID
 }
 
 func slugify(_ s: String) -> String {

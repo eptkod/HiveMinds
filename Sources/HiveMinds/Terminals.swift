@@ -80,9 +80,11 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
             if agent.model != "default" { args += ["--model", agent.model] }
             args += agent.provider.effortArgs(agent.effort)
             if !agent.role.isEmpty { args += ["--append-system-prompt", agent.role] }
-            if let access = agent.access { args += access.args(for: .claude) }
-            // Meeting seats write their notes without stopping to ask, unless you turned that off.
-            if agent.meetingID != nil && MeetingDefaults.acceptEdits { args += ["--permission-mode", "acceptEdits"] }
+            // Meeting seats use the default access from Settings > Agents, unless they were given their own.
+            let access = agent.access ?? (agent.meetingID != nil ? AgentDefaults.access : nil)
+            if let access { args += access.args(for: .claude) }
+            // On Manual review, meeting seats still write their notes without stopping to ask, unless you turned that off.
+            if agent.meetingID != nil && access == .manual && MeetingDefaults.acceptEdits { args += ["--permission-mode", "acceptEdits"] }
             if !agent.hasStarted, let task = agent.pendingTask { args.append(task) }
             store.setStatus(agent.id, .starting, "Starting up")
         case .codex:
@@ -107,6 +109,15 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
         guard let v = views[id] else { return }
         v.send(txt: "\u{1b}[200~" + text + "\u{1b}[201~")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak v] in v?.send(txt: "\r") }
+    }
+
+    /// Presses keys in an agent's terminal one after another, with a short gap so each prompt can redraw
+    /// before the next key arrives. Used to answer a permission prompt or a question from a tile.
+    func press(_ id: UUID, _ keys: [String]) {
+        guard let v = views[id] else { return }
+        for (i, key) in keys.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 * Double(i)) { [weak v] in v?.send(txt: key) }
+        }
     }
 
     #if DEBUG
@@ -141,6 +152,7 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
                 self.store?.update(id) { $0.hasStarted = false; $0.sessionID = UUID() }
                 source.feed(text: "\r\n\u{1b}[2m— The earlier conversation couldn't be reopened. Press Restart to begin a new one. —\u{1b}[0m\r\n")
                 self.store?.setStatus(id, .asleep, "Couldn't reopen its conversation")
+                Sounds.play(.error)
                 return
             }
             source.feed(text: "\r\n\u{1b}[2m— Session ended. Press Restart to pick up where it left off. —\u{1b}[0m\r\n")

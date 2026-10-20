@@ -26,7 +26,7 @@ struct SidebarView: View {
                             AgentRow(agent: agent)
                                 .modifier(ChainDrop(shown: dropping != project.id || i < dropped))
                                 .tag(SidebarItem.agent(agent.id))
-                                .contextMenu { agentMenu(agent) }
+                                .contextMenu { AgentMenu(agent: agent) }
                         }
                         Button { store.beginNewAgent(in: project.id) } label: {
                             Label("New agent", systemImage: "plus")
@@ -42,6 +42,7 @@ struct SidebarView: View {
                         Menu {
                             Button("New Agent Here") { store.beginNewAgent(in: project.id) }
                             Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
+                            Button("New Shell Tab") { store.newShellTab(in: project.id) }
                             Button("Show in Finder") { store.revealInFinder(project.path) }
                             if let repo = project.repo, let url = URL(string: "https://github.com/\(repo)") {
                                 Link("Open on GitHub", destination: url)
@@ -115,14 +116,6 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-    }
-
-    @ViewBuilder private func agentMenu(_ agent: Agent) -> some View {
-        Button("Restart") { store.restart(agent.id) }
-        Button("Stop") { store.stop(agent.id) }
-        Button("Show in Finder") { store.revealInFinder(agent.cwd) }
-        Divider()
-        Button("Delete Agent…", role: .destructive) { store.pendingDelete = agent }
     }
 }
 

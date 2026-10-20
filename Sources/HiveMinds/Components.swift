@@ -16,6 +16,8 @@ enum Motion {
     static let reflow = Animation.spring(response: 0.3, dampingFraction: 0.72)
     /// A dropped tile springing into its slot.
     static let drop = Animation.spring(response: 0.45, dampingFraction: 0.6)
+    /// The Canvas sliding to another page.
+    static let pageTurn = Animation.spring(response: 0.38, dampingFraction: 0.86)
     /// Pressing a control.
     static let press = Animation.spring(response: 0.22, dampingFraction: 0.6)
     /// Content coming in: a slight grow from just under full size, plus a fade.
@@ -105,11 +107,13 @@ struct PageHeader: View {
 
 struct NoticeBar: View {
     let text: String
+    var icon = "checkmark.circle"
+    var tint = Color.green
     let dismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle").foregroundStyle(.green)
+            Image(systemName: icon).foregroundStyle(tint)
             Text(text).font(.callout).lineLimit(2)
             Spacer(minLength: 8)
             Button(action: dismiss) { Image(systemName: "xmark") }

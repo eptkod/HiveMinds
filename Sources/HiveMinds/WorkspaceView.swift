@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A project's workspace: a row of tabs (the Canvas with everything at once, each agent, and any browser tabs)
+/// A project's workspace: a row of tabs (the Canvas with everything at once, each agent, and any browser or shell tabs)
 /// over whichever tab is open. Picking a project or one of its agents in the sidebar opens it.
 struct WorkspaceView: View {
     @Environment(AppStore.self) private var store
@@ -16,6 +16,9 @@ struct WorkspaceView: View {
                         .id(id)
                 case .browser(let id) where store.browserTab(id) != nil:
                     BrowserView(tab: store.browserTab(id)!)
+                        .id(id)
+                case .shell(let id) where store.shellTab(id) != nil:
+                    ShellView(tab: store.shellTab(id)!)
                         .id(id)
                 case .meeting(let id) where store.meeting(id) != nil:
                     MeetingOverviewPage(meeting: store.meeting(id)!)
@@ -42,7 +45,7 @@ struct WorkspaceTabBar: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 GlassEffectContainer(spacing: 12) {
                     HStack(spacing: 4) {
-                        WorkspaceTab(selected: !isAgentOrBrowser, namespace: selection, help: "Every agent, browser tab and meeting in \(project.name), side by side") {
+                        WorkspaceTab(selected: !isAgentOrBrowser, namespace: selection, help: "Every agent, browser tab, shell and meeting in \(project.name), side by side") {
                             Image(systemName: "square.grid.2x2")
                             Text("Canvas")
                         } action: {
@@ -55,12 +58,7 @@ struct WorkspaceTabBar: View {
                             } action: {
                                 store.selection = .agent(agent.id)
                             }
-                            .contextMenu {
-                                Button("Restart") { store.restart(agent.id) }
-                                Button("Stop") { store.stop(agent.id) }
-                                Divider()
-                                Button("Delete Agent…", role: .destructive) { store.pendingDelete = agent }
-                            }
+                            .contextMenu { AgentMenu(agent: agent) }
                         }
                         ForEach(store.browserTabs(in: project)) { tab in
                             WorkspaceTab(selected: store.selection == .browser(tab.id), namespace: selection, help: tab.url,
@@ -69,6 +67,15 @@ struct WorkspaceTabBar: View {
                                 Text(browserTitle(tab))
                             } action: {
                                 store.selection = .browser(tab.id)
+                            }
+                        }
+                        ForEach(store.shellTabs(in: project)) { tab in
+                            WorkspaceTab(selected: store.selection == .shell(tab.id), namespace: selection, help: "A shell in \(project.name)",
+                                         close: { store.closeShellTab(tab.id) }) {
+                                Image(systemName: "terminal")
+                                Text(shellTitle(tab))
+                            } action: {
+                                store.selection = .shell(tab.id)
                             }
                         }
                         ForEach(store.canvasMeetings(in: project)) { meeting in
@@ -97,11 +104,20 @@ struct WorkspaceTabBar: View {
             // The project's total, while the Canvas is open. Each agent's own tab shows its own.
             if !isAgentOrBrowser {
                 TokenBadge(agents: store.agents.filter { $0.projectID == project.id }.map(\.id), scope: "every agent in this project")
+                Button {
+                    withAnimation(Motion.bouncy) { store.pinCanvas(in: project, [:]) }
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(store.canvasPins[project.id, default: [:]].isEmpty)
+                .help("Put every tile back to its automatic size and place")
             }
 
             Menu {
                 Button("New Agent") { store.beginNewAgent(in: project.id) }
                 Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
+                Button("New Shell Tab") { store.newShellTab(in: project.id) }
                 Button("New Meeting…") { store.beginNewMeeting() }
                     .disabled(store.tools.claude == nil)
             } label: {
@@ -118,9 +134,14 @@ struct WorkspaceTabBar: View {
 
     private var isAgentOrBrowser: Bool {
         switch store.selection {
-        case .agent, .browser, .meeting: true
+        case .agent, .browser, .shell, .meeting: true
         default: false
         }
+    }
+
+    private func shellTitle(_ tab: ShellTab) -> String {
+        let title = Shells.shared.existing(tab.id)?.title ?? ""
+        return title.isEmpty ? "Shell" : title
     }
 
     private func browserTitle(_ tab: BrowserTab) -> String {
@@ -200,7 +221,7 @@ struct CanvasView: View {
         let items = store.canvasItems(in: project)
         if items.isEmpty {
             VStack(alignment: .leading, spacing: 22) {
-                PageHeader(title: project.name, subtitle: "Your agents and browser tabs in this project show here side by side.")
+                PageHeader(title: project.name, subtitle: "Your agents, browser tabs and shells in this project show here side by side.")
                 Card(padding: 28) {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Nothing open yet").font(.title3.weight(.semibold))
@@ -211,6 +232,8 @@ struct CanvasView: View {
                                 .buttonStyle(.glassProminent)
                             Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
                                 .buttonStyle(.glass)
+                            Button("New Shell Tab") { store.newShellTab(in: project.id) }
+                                .buttonStyle(.glass)
                         }
                         .controlSize(.large)
                     }
@@ -220,146 +243,20 @@ struct CanvasView: View {
             }
             .padding(32)
         } else {
-            TileGrid(items: items, onReorder: { store.reorderCanvas(in: project.id, $0) }) { id, isDragged, drag in
+            TileGrid(items: items, pins: store.canvasPins[project.id] ?? [:],
+                     onReorder: { store.reorderCanvas(in: project.id, $0) },
+                     onPin: { store.pinCanvas(in: project, $0) }) { id, isDragged, drag in
                 if let agent = store.agent(id) {
                     AgentTile(agent: agent, isDragged: isDragged, drag: drag)
                 } else if let tab = store.browserTab(id) {
                     BrowserTile(tab: tab, isDragged: isDragged, drag: drag)
+                } else if let tab = store.shellTab(id) {
+                    ShellTile(tab: tab, isDragged: isDragged, drag: drag)
                 } else if let meeting = store.meeting(id) {
                     MeetingTile(meeting: meeting, isDragged: isDragged, drag: drag)
                 }
             }
         }
-    }
-}
-
-/// Tiles laid out in a grid that fits the window, used by the Canvas and the meeting room.
-/// Drag a tile by its title bar to move it: the others make room, and it snaps into the nearest slot.
-struct TileGrid<Tile: View>: View {
-    let items: [UUID]
-    /// Called with the new order when a dragged tile is dropped.
-    let onReorder: ([UUID]) -> Void
-    /// A tile, given whether it's being dragged and the gesture its title bar should use.
-    @ViewBuilder let tile: (UUID, Bool, AnyGesture<DragGesture.Value>) -> Tile
-
-    /// The order on screen while a tile is being dragged. Saved when it's dropped.
-    @State private var order: [UUID] = []
-    @State private var dragging: UUID?
-    @State private var dragStart: CGPoint = .zero
-    @State private var dragTranslation: CGSize = .zero
-
-    private let spacing: CGFloat = 10
-    private let padding: CGFloat = 14
-    private let minTileHeight: CGFloat = 260
-
-    var body: some View {
-        GeometryReader { geo in
-            let ids = displayOrder(items)
-            let layout = GridSlots(count: ids.count, size: geo.size, spacing: spacing, padding: padding, minTileHeight: minTileHeight)
-            ScrollView {
-                ZStack(alignment: .topLeading) {
-                    ForEach(ids, id: \.self) { id in
-                        if let index = ids.firstIndex(of: id) {
-                            let slot = layout.frame(index)
-                            let isDragged = dragging == id
-                            tile(id, isDragged, dragGesture(id: id, ids: ids, layout: layout))
-                                .frame(width: slot.width, height: slot.height)
-                                .position(isDragged
-                                          ? CGPoint(x: dragStart.x + dragTranslation.width, y: dragStart.y + dragTranslation.height)
-                                          : CGPoint(x: slot.midX, y: slot.midY))
-                                .zIndex(isDragged ? 1 : 0)
-                                .transition(.scale(scale: 0.9).combined(with: .opacity))
-                        }
-                    }
-                }
-                // Tiles added, closed or reordered from elsewhere spring into place. Not during a drag,
-                // where the dragged tile has to stay under the pointer.
-                .animation(dragging == nil ? Motion.bouncy : nil, value: items)
-                .frame(width: geo.size.width, height: layout.contentHeight, alignment: .topLeading)
-            }
-            .scrollDisabled(layout.fits)
-        }
-        .coordinateSpace(.named("grid"))
-    }
-
-    /// The saved order, with anything the drag doesn't know about yet added at the end.
-    private func displayOrder(_ current: [UUID]) -> [UUID] {
-        guard dragging != nil else { return current }
-        return order.filter(current.contains) + current.filter { !order.contains($0) }
-    }
-
-    private func dragGesture(id: UUID, ids: [UUID], layout: GridSlots) -> AnyGesture<DragGesture.Value> {
-        AnyGesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("grid"))
-            .onChanged { value in
-                if dragging != id {
-                    order = ids
-                    let start = layout.frame(ids.firstIndex(of: id) ?? 0)
-                    dragStart = CGPoint(x: start.midX, y: start.midY)
-                    withAnimation(Motion.press) { dragging = id }
-                    NSCursor.closedHand.push()
-                }
-                dragTranslation = value.translation
-                let center = CGPoint(x: dragStart.x + value.translation.width, y: dragStart.y + value.translation.height)
-                let target = layout.nearest(to: center)
-                if let from = order.firstIndex(of: id), from != target {
-                    withAnimation(Motion.reflow) {
-                        order.remove(at: from)
-                        order.insert(id, at: min(target, order.count))
-                    }
-                }
-            }
-            .onEnded { _ in
-                NSCursor.pop()
-                onReorder(order)
-                withAnimation(Motion.drop) {
-                    dragging = nil
-                    dragTranslation = .zero
-                }
-            })
-    }
-}
-
-/// Where each tile goes: 1, 2 or 3 columns depending on how many agents there are and how wide the
-/// window is. Tiles share the height when they fit, and the grid scrolls once they'd get too short.
-/// When the last row isn't full, the tiles above its empty slots stretch down to fill them.
-struct GridSlots {
-    let count: Int
-    let columns: Int
-    let rows: Int
-    let tile: CGSize
-    let spacing: CGFloat
-    let padding: CGFloat
-    let fits: Bool
-
-    init(count: Int, size: CGSize, spacing: CGFloat, padding: CGFloat, minTileHeight: CGFloat) {
-        self.count = count
-        let wanted = count <= 1 ? 1 : count <= 4 ? 2 : 3
-        columns = max(1, min(wanted, Int(size.width / 380)))
-        rows = max(1, Int(ceil(Double(count) / Double(columns))))
-        let width = (size.width - padding * 2 - spacing * CGFloat(columns - 1)) / CGFloat(columns)
-        let fitted = (size.height - padding * 2 - spacing * CGFloat(rows - 1)) / CGFloat(rows)
-        fits = fitted >= minTileHeight
-        tile = CGSize(width: max(width, 0), height: max(fitted, minTileHeight))
-        self.spacing = spacing
-        self.padding = padding
-    }
-
-    var contentHeight: CGFloat { padding * 2 + tile.height * CGFloat(rows) + spacing * CGFloat(rows - 1) }
-
-    func frame(_ index: Int) -> CGRect {
-        let col = index % columns, row = index / columns
-        let stretch = index + columns >= count && row < rows - 1
-        return CGRect(x: padding + CGFloat(col) * (tile.width + spacing),
-                      y: padding + CGFloat(row) * (tile.height + spacing),
-                      width: tile.width, height: stretch ? tile.height * 2 + spacing : tile.height)
-    }
-
-    /// The filled slot whose middle is closest to a point.
-    func nearest(to point: CGPoint) -> Int {
-        (0..<count).min { a, b in
-            let fa = frame(a), fb = frame(b)
-            return hypot(fa.midX - point.x, fa.midY - point.y) < hypot(fb.midX - point.x, fb.midY - point.y)
-        } ?? 0
     }
 }
 
@@ -394,7 +291,12 @@ struct AgentTile<Drag: Gesture>: View {
                     Task { await store.deleteAgent(agent) }
                 }
             }
+            .contextMenu { AgentMenu(agent: agent) }
             .tileHeader(drag)
+
+            AskBar(agentID: agent.id)
+                .padding(.horizontal, 8)
+                .padding(.bottom, s.ask != nil && s.status == .needsYou ? 6 : 0)
 
             Group {
                 if s.status == .asleep || store.stopped.contains(agent.id) {
@@ -521,9 +423,9 @@ extension View {
             .padding(.vertical, 8)
             .contentShape(Rectangle())
             .gesture(drag)
-            .onHover { inside in
-                if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
-            }
+            // SwiftUI keeps this cursor up for as long as the pointer is over the bar. A pushed NSCursor
+            // got reset by the terminal and buttons inside the tile, so the bar didn't look draggable.
+            .pointerStyle(.grabIdle)
             .help("Drag to move")
     }
 
