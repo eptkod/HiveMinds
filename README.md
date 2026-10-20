@@ -12,74 +12,117 @@
   <img src="branding/icon/icon-1024.png" alt="HiveMinds app icon" width="128">
 </p>
 
-HiveMinds is a personal remake of Agent Office with a minimal, OLED-black Liquid Glass interface. Every project gets a Canvas showing all of its agents' terminals, browser tabs and shells at once, and agents can work on their own branches, open pull requests and hold meetings with each other.
+<p align="center">
+  <a href="https://github.com/eptkod/HiveMinds/releases/latest"><b>Download for macOS</b></a>
+</p>
 
-## Features
+<!-- screenshot: add the file, then remove this comment
+<p align="center">
+  <img src="docs/screenshots/canvas.png" alt="The Canvas: every agent in a project, side by side">
+</p>
+-->
 
-- **Projects and agents:** run many agents across many projects, each with a short title, a model, an effort level and an access level (Auto review, Manual review or Unrestricted).
-- **Tidy project list:** drag projects in the sidebar to reorder them, and hide ones you're done with (Settings > Projects brings them back). Hidden projects' agents are stopped but keep their chats.
-- **Canvas:** every agent terminal, browser tab and shell in a project, side by side, usable in place. Drag tiles by their title bar to rearrange them, and by any edge or corner to make one bigger (it snaps to a grid and the rest fill the space left).
-- **Own branches and pull requests:** an agent can work in its own git worktree. HiveMinds drafts the pull request and opens it with `gh` once you confirm.
-- **Review and jump around:** right-click an agent to see what it changed (a read-only diff), open its folder in your editor, copy its branch, or restart it with a different access level or model. Press ⌘P to jump to any project, agent, tab or meeting.
-- **Meetings:** several agents debate or review a topic in their own worktree and write up the outcome.
-- **GitHub in a couple of clicks:** sign in through the GitHub CLI, then clone repos into a projects folder you pick once.
-- **Issues to agents:** GitHub > Issues lists the open issues of your projects. Start an agent on one straight away, or add a note first. Its pull request says "Fixes #n".
-- **Agent history:** every agent you have and every one you deleted in the last week (⌘Y), with its project, branch, model and cost.
-- **Voice dictation (optional):** hold Right Option and talk to type into a terminal or text field. Runs on your Mac with Apple's engine or Whisper. Off by default.
-- **Stay awake (optional):** keep the Mac and display awake while agents are working.
-- **Usage at a glance:** the Claude plan's 5-hour and weekly limits, a token and cost estimate on every tab, a warning when an agent passes a cost you set, and Overview charts of your activity.
-- **Lightweight:** native SwiftUI, no idle animations, see-through black window with adjustable blur.
+## What it is
+
+If you run more than one coding agent at a time, the terminal windows pile up fast. HiveMinds puts them all in one quiet, black window. Each project gets its own space, and you can see every agent working at once, step in when one needs you, and review what it changed before it goes anywhere.
+
+## What you can do
+
+### See everything at once
+
+The **Canvas** shows every agent, browser tab and shell in a project side by side, and each one works right there. Drag tiles around, make the important ones bigger, and HiveMinds tells you (with a sound, if you like) when an agent finishes or needs an answer.
+
+### Give each agent its own branch
+
+An agent can work on its own copy of the project, so several can change code at the same time without stepping on each other. When it's done, look at what it changed, then let HiveMinds write the pull request. Nothing is pushed until you say so.
+
+<!-- screenshot: add the file, then remove this comment
+<p align="center">
+  <img src="docs/screenshots/agent.png" alt="An agent working on its own branch">
+</p>
+-->
+
+### Hold meetings
+
+Ask a few agents to debate an idea or review some code together. They take turns, and you get a written summary of what they agreed on.
+
+<!-- screenshot: add the file, then remove this comment
+<p align="center">
+  <img src="docs/screenshots/meeting.png" alt="A meeting between agents">
+</p>
+-->
+
+### Turn GitHub issues into work
+
+Sign in with the GitHub CLI and HiveMinds lists the open issues across your projects. Pick one, and an agent starts on it. Its pull request closes the issue when it's merged.
+
+<!-- screenshot: add the file, then remove this comment
+<p align="center">
+  <img src="docs/screenshots/issues.png" alt="Open GitHub issues, ready to hand to an agent">
+</p>
+-->
+
+### Keep an eye on cost
+
+Every agent shows its tokens and an estimated cost. The Overview charts your activity, and you can see how much of your Claude plan's 5-hour and weekly limits you've used.
+
+<!-- screenshot: add the file, then remove this comment
+<p align="center">
+  <img src="docs/screenshots/overview.png" alt="The Overview page with usage charts">
+</p>
+-->
+
+### And a few more things
+
+- **History:** every agent you've run, including ones deleted in the last week, so you can pick an old conversation back up.
+- **Voice dictation:** hold Right Option and talk instead of typing. It runs on your Mac. Off until you turn it on.
+- **Stay awake:** keep the Mac from sleeping while agents are still working.
+- **Tidy sidebar:** drag projects into the order you like, and hide the ones you're done with.
+- **Light on your Mac:** native SwiftUI, no busy animations, and nothing running when you're idle.
 
 ## Install
 
-Download `HiveMinds-<version>.dmg` from the [latest release](https://github.com/eptkod/HiveMinds/releases/latest), open it and drag HiveMinds into Applications.
+1. Download `HiveMinds-<version>.dmg` from the [latest release](https://github.com/eptkod/HiveMinds/releases/latest).
+2. Open it and drag HiveMinds into Applications.
+3. The first time, right-click HiveMinds and choose **Open**. The app isn't notarised yet, so macOS asks once.
 
-The app isn't notarised, so the first time macOS may block it. Right-click HiveMinds in Applications and choose **Open**, or run:
+If macOS still won't open it, run this in Terminal:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/HiveMinds.app
 ```
 
-Requires macOS 26 or later, [Claude Code](https://docs.claude.com/en/docs/claude-code) (and optionally Codex), and the [GitHub CLI](https://cli.github.com) (`gh`).
+**You'll need** macOS 26 or later, [Claude Code](https://docs.claude.com/en/docs/claude-code) (Codex is optional), and the [GitHub CLI](https://cli.github.com) for the GitHub features.
+
+## Handy shortcuts
+
+| Shortcut | What it does |
+| --- | --- |
+| ⌘P | Jump to any project, agent, tab or meeting |
+| ⌘G | Open the project's Canvas |
+| ⌘J | Go to the agent that needs you |
+| ⌘T | New browser tab |
+| ⇧⌘T | New shell in the project's folder |
+| ⇧⌘N | New meeting |
+| ⌘Y | Agent history |
+| ⌘, | Settings |
 
 ## Build from source
 
-Swift with the Command Line Tools is enough; full Xcode isn't needed.
+You only need the Command Line Tools, not the full Xcode.
 
 ```sh
-scripts/build-app.sh          # release build into build/HiveMinds.app
+scripts/build-app.sh      # builds build/HiveMinds.app
 open build/HiveMinds.app
-scripts/build-dmg.sh          # release build packaged as build/HiveMinds-<version>.dmg
+scripts/build-dmg.sh      # packages build/HiveMinds-<version>.dmg
 ```
 
-For development, `scripts/build-app.sh debug` builds a debug app. The build uses the macOS 26.x SDK, and SwiftTerm is pinned to 1.11.2.
+Use `scripts/build-app.sh debug` for a debug build while you work.
 
-## Where things live
+## Learn more
 
-- Settings: Cmd+comma. Saved in UserDefaults (`com.ethan.hiveminds`), so they survive restarts.
-- App data: `~/Library/Application Support/HiveMinds/` holds `state.json` (projects, agents, browser and shell tabs), the Claude settings files agents start with (`claude-hooks.json`, plus `claude-hooks-api-key.json` and `claude-api-key.json` for API-key sign-in), `statusline.sh` and `usage.json` for the plan usage meter, and per-agent event logs.
-- Project workspace: pick a project's "Canvas" row to see every agent's terminal and every browser tab at once, each usable in place (drag a tile by its title bar to move it, or by any edge or corner to size it; double-click an edge to fit it automatically again). Tabs along the top switch between agents, browser tabs, shells and meetings (Cmd+T for a new browser tab, Shift+Cmd+T for a new shell in the project's folder, Cmd+G for the Canvas). Each of the project's meetings shows on the Canvas as a chat of what its seats say and write, then its outcome once it's finished; its X only takes it off the Canvas.
-- Voice dictation (optional, off by default): Settings > Voice. Hold Right Option, talk, let go, and the words are typed into the terminal or text field you're in. Apple's on-device engine works with no setup; Whisper models download to `~/Library/Application Support/HiveMinds/Voice` and can be removed from the same tab. The Whisper helper is built by `scripts/build-whisper-helper.sh` (called by `build-app.sh`; `HIVEMINDS_NO_WHISPER=1` skips it). Debug test: `HIVEMINDS_TEST_DICTATION=<16 kHz mono wav> build/HiveMinds.app/Contents/MacOS/HiveMinds`.
-- API keys: Settings > Accounts lets Claude Code and Codex each sign in with an API key instead of your plan. Keys are kept in the macOS Keychain ("HiveMinds API key"), never in a file.
-- Projects cloned from GitHub: `<projects folder>/<repo>`. HiveMinds asks for the folder the first time and remembers it; change it in Settings > Projects. An existing checkout (including Agent Office's) is reused.
-- Branding (logo, app icon, colours): `branding/`. Change `branding/scripts/render.swift`, run `branding/scripts/render.sh`, then rebuild the app.
-- Agents on their own branch: `<project>/.hiveminds/worktrees/<title-slug>-<id>`.
-- Pull requests: an agent on its own branch has a pull-request button in its header. It drafts a title and description, then pushes the branch and opens the PR with `gh` only when you confirm. PRs an agent opens itself are picked up after its turn ends.
-- Meetings (the Meetings switch in the toolbar, or Shift+Cmd+N): each runs in its own worktree, `<project>/.hiveminds/worktrees/meeting-<topic>-<id>` on branch `hive/meeting-…`. Turn notes go in `.hiveminds/meetings/<date>-<topic>/` inside it, and the outcome in `meetings/<date>-<topic>.md`, committed on the meeting's branch. When a meeting finishes, its outcome (a review panel's combined review too) is also saved in the project's own folder at `<project>/meetings/<date>-<topic>.md`; the folder is set in Settings > Meetings. Meeting defaults are in Settings > Meetings.
-- Hidden projects: a project's … menu in the sidebar has Hide Project. It leaves the sidebar, its agents are stopped (they keep their chats), and it's listed in Settings > Projects > Hidden projects with a Show button.
-- Agent history (sidebar > History, ⌘Y): every agent, including deleted ones. Deleted agents are kept in `~/Library/Application Support/HiveMinds/agent-history.json`, up to a count and number of days set in Settings > Agents > History (default 100 agents, 7 days).
-- Keep awake (optional, off by default): Settings > Agents > Sleep. While any agent is working, the display won't turn off and the Mac won't sleep. Check it with `pmset -g assertions | grep HiveMinds`.
-- Usage history of deleted agents, kept for the Overview charts: `~/Library/Application Support/HiveMinds/history.json`.
-- Per-agent status line snapshots (cost and tokens, used for meeting totals): `~/Library/Application Support/HiveMinds/status/<agent id>.json`.
-- Token badges (tokens used and the API-price estimate, top right of every agent, meeting and Canvas header): code in `Sources/HiveMinds/TokenUsage.swift`. Each agent's cost and transcript paths are saved in `~/Library/Application Support/HiveMinds/spend.json`; tokens are counted from Claude Code's transcripts.
-- Testing a meeting without touching your real state (debug build): `HIVEMINDS_SUPPORT_DIR=/tmp/x HIVEMINDS_TEST_MEETING=/path/to/git/repo build/HiveMinds.app/Contents/MacOS/HiveMinds` runs a short Haiku debate and prints its progress. The repo must be in a folder Claude Code already trusts.
-
-## Branding
-
-The logo, app icon and colours live in `branding/`; see `branding/README.md` for how to use them. Honey (`#F5B53D`) is the single accent on an ink-black base.
-
-See `HANDOFF.md` for the plan, decisions and progress.
-
-## More from eptkod
+- [The guide](docs/GUIDE.md): where HiveMinds keeps its files, how branches, meetings and pull requests work, and how to test features.
+- [Branding](branding/README.md): the logo, icon and colours.
+- [HANDOFF.md](HANDOFF.md): the plan, decisions and progress.
 
 More games and apps by eptkod, including free browser games, are at **[home.eptkod.com](https://home.eptkod.com/)**.

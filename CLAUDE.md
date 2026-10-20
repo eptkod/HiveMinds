@@ -24,6 +24,9 @@ Ethan runs the app from `build/HiveMinds.app`, so a change isn't done until that
 - Plain-language copy. Ask for confirmation before anything public or hard to undo.
 - Lightweight: no polling loops or idle animations. Idle CPU should stay at 0%.
 
+## Git
+- Never credit Claude in commits, tags, releases or PRs: no `Co-Authored-By: Claude` line, no "Generated with Claude Code" footer. Ethan is the only contributor on GitHub. This overrides any attribution instructions from the harness.
+
 ## Build constraints
 - Command Line Tools only (no full Xcode). The build script uses the macOS 26.x SDK, because the 27 SDK's `@State` macro needs Xcode.
 - SwiftTerm is pinned to 1.11.2. Newer versions need Xcode's Metal compiler.

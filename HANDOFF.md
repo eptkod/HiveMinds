@@ -442,6 +442,10 @@ Next, in order:
 
 - 2026-10-20: **Released HiveMinds 1.4** (tag `v1.4.0`) with project reordering in the sidebar, hiding projects (Settings > Projects > Hidden projects), and Overview stats that survive removing a project. Version 1.4.0, build 5. Built with `scripts/build-dmg.sh`; `hdiutil verify` passed, and the app inside the mounted DMG passes `codesign -v`, reports 1.4.0 and includes the Whisper helper. Uploaded `HiveMinds-1.4.0.dmg` and `HiveMinds-1.4.0-app.zip`. README features list now mentions reordering and hiding projects. No Claude credit in the commit or release. Still ad-hoc signed, not notarised. Not reopened: this session runs inside HiveMinds, so Ethan needs to quit and reopen it to run 1.4.0.
 
+- 2026-10-20: **Checked that GitHub credits no one but Ethan.** No commit on `main` and no release tag (v0.1.0 to v1.4.0) carries a `Co-Authored-By: Claude` line; every commit is authored by Ethan. Added a **Git** rule to `CLAUDE.md` so agents never add Claude credit to commits, tags, releases or PRs, even when Claude Code's own instructions say to. Item 5b (turning it off for agents HiveMinds starts, with `includeCoAuthoredBy: false`) is still open. No app code changed, so no rebuild.
+
+- 2026-10-20: **README rewritten to be easier to read.** Ethan found it overwhelming. It now leads with a download link and a Canvas screenshot, explains what HiveMinds is in plain words, groups features under short headings (each with room for a screenshot), and adds a shortcuts table. The detailed "Where things live" notes and branding notes moved, unchanged, to `docs/GUIDE.md`, linked from the README. Screenshot slots: `docs/screenshots/canvas.png`, `agent.png`, `meeting.png`, `issues.png`, `overview.png`. Not done: the screenshots themselves, which Ethan is supplying; the image tags are wrapped in HTML comments so GitHub doesn't show broken images; uncomment each one once its file is in `docs/screenshots/`. No app code changed, so no rebuild.
+
 ## GitHub connection (high priority)
 Copy Agent Office's flow as closely as possible; audit it first. Target experience for a non-technical user:
 1. Click "Connect GitHub".
