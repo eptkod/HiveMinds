@@ -69,3 +69,7 @@ For development, `scripts/build-app.sh debug` builds a debug app. The build uses
 The logo, app icon and colours live in `branding/`; see `branding/README.md` for how to use them. Honey (`#F5B53D`) is the single accent on an ink-black base.
 
 See `HANDOFF.md` for the plan, decisions and progress.
+
+## More from eptkod
+
+More games and apps by eptkod, including free browser games, are at **[home.eptkod.com](https://home.eptkod.com/)**.
