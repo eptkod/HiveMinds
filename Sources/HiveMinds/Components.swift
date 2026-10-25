@@ -133,6 +133,9 @@ struct NoticeBar: View {
 
 extension Date {
     var relative: String {
-        RelativeDateTimeFormatter().localizedString(for: self, relativeTo: Date())
+        // A moment ago, or a hair in the future from clock jitter, reads "just now" rather than "in 0 seconds".
+        let now = Date()
+        if abs(timeIntervalSince(now)) < 5 { return "just now" }
+        return RelativeDateTimeFormatter().localizedString(for: min(self, now), relativeTo: now)
     }
 }

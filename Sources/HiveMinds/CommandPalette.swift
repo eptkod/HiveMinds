@@ -139,6 +139,19 @@ struct CommandPalette: View {
             store.selection = .history
         })
         out.append(PaletteItem(id: "a.settings", title: "Settings", subtitle: "⌘,", icon: "gearshape") { openSettings() })
+        let dictated = Dictation.shared.recent
+        if !dictated.isEmpty {
+            out.append(PaletteItem(id: "a.retype", title: "Type Last Dictation Again", subtitle: "⌥⌘V", icon: "mic") {
+                // After the palette closes, so it types into what was focused before.
+                DispatchQueue.main.async { Dictation.shared.retype() }
+            })
+            for (i, text) in dictated.enumerated() {
+                let words = text.split(separator: " ")
+                let preview = words.prefix(8).joined(separator: " ") + (words.count > 8 ? "…" : "")
+                out.append(PaletteItem(id: "d.\(i)", title: "Copy Dictation: \(preview)", subtitle: "\(words.count) words",
+                                       icon: "doc.on.doc") { Dictation.shared.copy(text) })
+            }
+        }
 
         // Places, the open project's first.
         let projects = store.shownProjects.sorted { ($0.id == current ? 0 : 1) < ($1.id == current ? 0 : 1) }

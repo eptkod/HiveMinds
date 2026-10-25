@@ -428,7 +428,7 @@ final class AppStore {
     }
 
     func createAgent(projectID: UUID, provider: Provider, model: String, effort: Effort = AgentDefaults.effort,
-                     access: Access = AgentDefaults.access, role: String, task: String, attachments: [Attachment] = [], ownBranch: Bool,
+                     access: Access = AgentDefaults.access, planMode: Bool = false, role: String, task: String, attachments: [Attachment] = [], ownBranch: Bool,
                      issue: IssueRef? = nil, open: Bool = true) async throws {
         guard let project = project(projectID) else { throw NewAgentError("Pick a project first.") }
         let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -453,6 +453,7 @@ final class AppStore {
                           role: role.trimmingCharacters(in: .whitespacesAndNewlines),
                           cwd: cwd, branch: branch, pendingTask: prompt.isEmpty ? nil : prompt)
         agent.issue = issue
+        if planMode && provider == .claude { agent.startsInPlan = true }
         // An issue already has a title someone wrote, so it doesn't need one from Haiku.
         if let issue { agent.title = Agent.roughTitle(issue.title) } else if !t.isEmpty { agent.title = Agent.roughTitle(t) }
         agents.append(agent)

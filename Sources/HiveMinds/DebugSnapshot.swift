@@ -189,6 +189,22 @@ enum DebugSnapshot {
                     try? png.write(to: URL(fileURLWithPath: "\(prefix)-overview-stats.png"))
                 }
             }
+            // The Overview's agent cards on black, with a spread of statuses so each look can be checked.
+            // `HIVEMINDS_SNAPSHOT_ONLY=overview-agents` takes just this.
+            if ProcessInfo.processInfo.environment["HIVEMINDS_SNAPSHOT_ONLY"].map({ $0.contains("overview-agents") }) ?? true {
+                let looks: [(AgentStatus, String)] = [(.working, "Running swift build"), (.needsYou, "Has a question for you"),
+                                                      (.done, "Finished · Editing OverviewView.swift"), (.idle, "")]
+                for (a, look) in zip(store.agents, looks) { store.setStatus(a.id, look.0, look.1) }
+                print("SNAP overview-agents", store.agents.count); fflush(stdout)
+                let renderer = ImageRenderer(content: LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
+                    ForEach(store.agents) { AgentCard(agent: $0) }
+                }.environment(store).padding(32).frame(width: 1100).background(.black).environment(\.colorScheme, .dark))
+                renderer.scale = 2
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: "\(prefix)-overview-agents.png"))
+                }
+            }
             for w in NSApp.windows where w.isVisible {
                 print("WINDOW", w.title, "opaque:", w.isOpaque, "blur-call-ok:", WindowBlur.set(w, radius: 24))
             }

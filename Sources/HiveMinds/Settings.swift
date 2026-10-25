@@ -15,6 +15,7 @@ enum SettingKey {
     static let ownBranch = "agents.ownBranch"
     static let defaultAccess = "agents.defaultAccess"
     static let defaultRole = "agents.defaultRole"
+    static let planMode = "agents.planMode"
     static let autoTitles = "agents.autoTitles"
     /// Estimated cost, in dollars, at which an agent gets a warning. 0 is off.
     static let costWarning = "agents.costWarning"
@@ -64,6 +65,7 @@ enum SettingDefault {
     static let ownBranch = true
     static let defaultAccess = Access.auto.rawValue
     static let defaultRole = ""
+    static let planMode = false
     static let autoTitles = true
     static let costWarning = 10.0
     static let costWarningChoices: [Double] = [0, 1, 5, 10, 25, 50, 100]
@@ -105,6 +107,7 @@ enum AgentDefaults {
     static var access: Access { Access(rawValue: d.string(forKey: SettingKey.defaultAccess) ?? "") ?? .auto }
     static var ownBranch: Bool { d.object(forKey: SettingKey.ownBranch) as? Bool ?? SettingDefault.ownBranch }
     static var role: String { d.string(forKey: SettingKey.defaultRole) ?? SettingDefault.defaultRole }
+    static var planMode: Bool { d.object(forKey: SettingKey.planMode) as? Bool ?? SettingDefault.planMode }
     static var autoTitles: Bool { d.object(forKey: SettingKey.autoTitles) as? Bool ?? SettingDefault.autoTitles }
     static var costWarning: Double { d.object(forKey: SettingKey.costWarning) as? Double ?? SettingDefault.costWarning }
     static var historyLimit: Int { d.object(forKey: SettingKey.historyLimit) as? Int ?? SettingDefault.historyLimit }
@@ -320,6 +323,7 @@ struct AgentSettings: View {
     @AppStorage(SettingKey.ownBranch) private var ownBranch = SettingDefault.ownBranch
     @AppStorage(SettingKey.defaultAccess) private var access = SettingDefault.defaultAccess
     @AppStorage(SettingKey.defaultRole) private var role = SettingDefault.defaultRole
+    @AppStorage(SettingKey.planMode) private var planMode = SettingDefault.planMode
     @AppStorage(SettingKey.autoTitles) private var autoTitles = SettingDefault.autoTitles
     @AppStorage(SettingKey.costWarning) private var costWarning = SettingDefault.costWarning
     @AppStorage(SettingKey.historyLimit) private var historyLimit = SettingDefault.historyLimit
@@ -329,6 +333,7 @@ struct AgentSettings: View {
     private var isDefault: Bool {
         provider == SettingDefault.defaultProvider && model == SettingDefault.defaultModel
             && effort == SettingDefault.defaultEffort && ownBranch == SettingDefault.ownBranch && access == SettingDefault.defaultAccess && role == SettingDefault.defaultRole
+            && planMode == SettingDefault.planMode
             && autoTitles == SettingDefault.autoTitles && costWarning == SettingDefault.costWarning
             && historyLimit == SettingDefault.historyLimit && historyDays == SettingDefault.historyDays
             && keepAwake == SettingDefault.keepAwake
@@ -366,6 +371,9 @@ struct AgentSettings: View {
                     Picker("Access", selection: $access) {
                         ForEach(Access.allCases) { Text($0.label).tag($0.rawValue) }
                     }
+                }
+                SettingRow(explainer: "New Claude Code agents start by writing a plan and wait for you to approve it before they change anything. Codex agents aren't affected.") {
+                    Toggle("Start in plan mode", isOn: $planMode)
                 }
                 SettingRow(explainer: "Each agent works on its own git branch, so you can review its changes as a pull request. Only applies in git projects.") {
                     Toggle("Own branch", isOn: $ownBranch)
@@ -434,6 +442,7 @@ struct AgentSettings: View {
                         historyLimit = SettingDefault.historyLimit
                         historyDays = SettingDefault.historyDays
                         keepAwake = SettingDefault.keepAwake
+                        planMode = SettingDefault.planMode
                     }
                     .disabled(isDefault)
                 }
@@ -633,7 +642,7 @@ struct VoiceSettings: View {
     var body: some View {
         Form {
             Section {
-                SettingRow(explainer: "Hold a key and talk; when you let go, what you said is typed into the terminal or text field you're in. Audio stays on this Mac and is never saved.") {
+                SettingRow(explainer: "Hold a key and talk; when you let go, what you said is typed into the terminal or text field you're in. Audio stays on this Mac and is never saved. If text doesn't land, ⌥⌘V types your last dictation again; the last 5 are kept in memory until you quit.") {
                     Toggle("Dictation", isOn: $on)
                 }
                 if on {
@@ -643,7 +652,7 @@ struct VoiceSettings: View {
                         }
                     }
                     SettingRow(explainer: hold
-                               ? "Talk while the key is down. Esc cancels."
+                               ? "Talk while the key is down. Press Space while holding it to keep listening after you let go, then tap the key to finish. Esc cancels."
                                : "Tap the key to start, tap it again to stop. Esc cancels.") {
                         Picker("Key works by", selection: $hold) {
                             Text("Holding it").tag(true)

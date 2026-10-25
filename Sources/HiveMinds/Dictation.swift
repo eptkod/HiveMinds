@@ -18,6 +18,15 @@ enum VoiceKey: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Short name for the pill.
+    var short: String {
+        switch self {
+        case .rightOption: "right ⌥"
+        case .rightCommand: "right ⌘"
+        case .function: "🌐"
+        }
+    }
+
     var explainer: String {
         switch self {
         case .rightOption: "The Option key on the right of the space bar. The left one still works as usual."
@@ -53,12 +62,17 @@ final class Dictation {
     private(set) var phase = Phase.idle
     /// Loudness of the last bit of audio, 0 to 1, while listening.
     private(set) var level: Double = 0
+    /// The last few things you said, newest first, so text that didn't land can be typed again or copied.
+    /// Memory only: never saved, and never put on the clipboard unless you ask.
+    private(set) var recent: [String] = []
 
     @ObservationIgnored private var monitor: Any?
     @ObservationIgnored private let recorder = MicRecorder()
     @ObservationIgnored private weak var target: NSResponder?
     @ObservationIgnored private var keyDownAt: Date?
     @ObservationIgnored private var keyUsedAsModifier = false
+    /// Key + Space locks listening on, so you can let go and keep talking. Tapping the key again finishes.
+    @ObservationIgnored private var handsFree = false
     @ObservationIgnored private var messageClear: DispatchWorkItem?
     /// Goes up on every cancel, so text from a cancelled recording is dropped when it arrives.
     @ObservationIgnored private var generation = 0
@@ -78,6 +92,7 @@ final class Dictation {
         } else {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            recent = []
             cancel()
             WhisperHelper.shared.stop()
         }
@@ -88,6 +103,21 @@ final class Dictation {
         if phase == .working { hud.show(text: text, busy: true) }
     }
 
+    /// Types the last dictation again where the cursor is now. Uses no clipboard.
+    func retype() {
+        guard let text = recent.first, phase != .listening, phase != .working else { return }
+        if !Self.insert(text, into: NSApp.keyWindow?.firstResponder) {
+            show("Click into a terminal or text field, then press ⌥⌘V.")
+        }
+    }
+
+    /// Puts a dictation on the clipboard. Only ever runs when you pick it.
+    func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        show("Copied to the clipboard")
+    }
+
     private func handle(_ event: NSEvent) -> NSEvent? {
         let key = VoiceDefaults.key
         if event.type == .keyDown {
@@ -95,6 +125,18 @@ final class Dictation {
             if event.keyCode == 53 && (phase == .listening || phase == .working) {
                 keyDownAt = nil
                 cancel()
+                return nil
+            }
+            // Space while holding our key: keep listening after you let go, like Wispr Flow's hands-free mode.
+            // In tap mode it starts listening too. The space isn't typed.
+            if event.keyCode == 49 && keyDownAt != nil {
+                if !handsFree {
+                    if phase != .listening { begin() }
+                    guard phase == .listening else { return nil }
+                    handsFree = true
+                    keyUsedAsModifier = true
+                    hud.show(text: "Hands-free · tap \(key.short) to finish · Esc to cancel", busy: false, listening: true)
+                }
                 return nil
             }
             if phase == .listening {
@@ -109,11 +151,19 @@ final class Dictation {
         let others = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([key.flag, .capsLock, .function])
         if event.modifierFlags.contains(key.flag) {
             guard others.isEmpty else { return event }
+            if handsFree {
+                // Tapping the key again ends a hands-free recording.
+                handsFree = false
+                keyDownAt = nil
+                if phase == .listening { finish() }
+                return event
+            }
             keyDownAt = Date()
             keyUsedAsModifier = false
             if VoiceDefaults.holdToTalk && phase != .listening { begin() }
         } else if let downAt = keyDownAt {
             keyDownAt = nil
+            if handsFree { return event }
             if VoiceDefaults.holdToTalk {
                 if phase == .listening { finish() }
             } else if !keyUsedAsModifier && Date().timeIntervalSince(downAt) < 0.5 {
@@ -153,6 +203,7 @@ final class Dictation {
     }
 
     private func finish() {
+        handsFree = false
         let samples = recorder.stop()
         level = 0
         // Under a third of a second, or nothing louder than room noise: don't guess at words.
@@ -175,10 +226,14 @@ final class Dictation {
                 let done = { if self.phase == .working { self.phase = .idle; self.hud.hide() } }
                 if text.isEmpty || Self.isNoise(text) {
                     done()
-                } else if Self.insert(text, into: target) {
+                    return
+                }
+                // Kept before typing, since a terminal that's still starting can swallow it without telling us.
+                recent = Array(([text] + recent).prefix(5))
+                if Self.insert(text, into: target) {
                     done()
                 } else if phase == .working {
-                    show("Click into a terminal or text field, then try again.")
+                    show("Didn't land anywhere. Click where it goes and press ⌥⌘V.")
                 }
             } catch {
                 if generation == self.generation && phase == .working { show(error.localizedDescription) }
@@ -187,6 +242,7 @@ final class Dictation {
     }
 
     private func cancel() {
+        handsFree = false
         guard phase == .listening || phase == .working else { return }
         generation += 1
         _ = recorder.stop()

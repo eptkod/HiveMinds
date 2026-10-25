@@ -61,7 +61,7 @@ Every agent shows its tokens and an estimated cost. The Overview charts your act
 ### And a few more things
 
 - **History:** every agent you've run, including ones deleted in the last week, so you can pick an old conversation back up.
-- **Voice dictation:** hold Right Option and talk instead of typing. It runs on your Mac. Off until you turn it on.
+- **Voice dictation:** hold Right Option and talk instead of typing, or press Right Option + Space to keep listening hands-free and tap Right Option to finish. If the words miss, ⌥⌘V types them again. It runs on your Mac. Off until you turn it on.
 - **Stay awake:** keep the Mac from sleeping while agents are still working.
 - **Tidy sidebar:** drag projects into the order you like, and hide the ones you're done with.
 - **Light on your Mac:** native SwiftUI, no busy animations, and nothing running when you're idle.

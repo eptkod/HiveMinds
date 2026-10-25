@@ -82,7 +82,12 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
             if !agent.role.isEmpty { args += ["--append-system-prompt", agent.role] }
             // Meeting seats use the default access from Settings > Agents, unless they were given their own.
             let access = agent.access ?? (agent.meetingID != nil ? AgentDefaults.access : nil)
-            if let access { args += access.args(for: .claude) }
+            if !agent.hasStarted && agent.startsInPlan == true {
+                // Plan mode replaces the access level's mode for the first start. Unrestricted stays on offer
+                // for when you approve the plan.
+                args += ["--permission-mode", "plan"]
+                if access == .unrestricted { args.append("--allow-dangerously-skip-permissions") }
+            } else if let access { args += access.args(for: .claude) }
             // On Manual review, meeting seats still write their notes without stopping to ask, unless you turned that off.
             if agent.meetingID != nil && access == .manual && MeetingDefaults.acceptEdits { args += ["--permission-mode", "acceptEdits"] }
             if !agent.hasStarted, let task = agent.pendingTask { args.append(task) }

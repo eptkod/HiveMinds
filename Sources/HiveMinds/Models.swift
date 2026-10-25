@@ -165,13 +165,16 @@ struct Agent: Codable, Identifiable, Hashable {
     var pullRequest: PullRequestRef?
     /// The GitHub issue it was started on, if any.
     var issue: IssueRef?
+    /// Starts in Claude Code's plan mode: it works out a plan and waits for you to approve it before changing anything.
+    /// Only used on the first start; a resumed agent picks up with its normal access.
+    var startsInPlan: Bool?
 
     static let untitled = "New chat"
     var isUntitled: Bool { title == Agent.untitled }
 
     // Saved as "name", which is what earlier versions called the title.
     enum CodingKeys: String, CodingKey {
-        case id, projectID, title = "name", provider, model, effort, access, role, cwd, branch, sessionID, hasStarted, pendingTask, createdAt, meetingID, pullRequest, issue
+        case id, projectID, title = "name", provider, model, effort, access, role, cwd, branch, sessionID, hasStarted, pendingTask, createdAt, meetingID, pullRequest, issue, startsInPlan
     }
 
     /// A quick title from the request itself, used until a better one comes back.

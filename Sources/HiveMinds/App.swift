@@ -34,6 +34,15 @@ struct HiveMindsApp: App {
                     .keyboardShortcut("o")
             }
             CloseTabCommand(store: store)
+            // Gets back dictation that didn't land. Copying only happens when you pick it.
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                Button("Type Last Dictation Again") { Dictation.shared.retype() }
+                    .keyboardShortcut("v", modifiers: [.command, .option])
+                    .disabled(Dictation.shared.recent.isEmpty)
+                Button("Copy Last Dictation") { Dictation.shared.recent.first.map(Dictation.shared.copy) }
+                    .disabled(Dictation.shared.recent.isEmpty)
+            }
             // ⌘P opens the palette, so there's no Print.
             CommandGroup(replacing: .printItem) {}
             CommandMenu("Agents") {

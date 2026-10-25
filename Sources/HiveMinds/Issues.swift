@@ -121,7 +121,7 @@ extension AppStore {
         let provider = available.contains(AgentDefaults.provider) ? AgentDefaults.provider : (available.first ?? .claude)
         try await createAgent(projectID: project.id, provider: provider,
                               model: provider == .claude ? AgentDefaults.model : "default",
-                              role: AgentDefaults.role, task: Self.issuePrompt(issue, note: note),
+                              planMode: AgentDefaults.planMode, role: AgentDefaults.role, task: Self.issuePrompt(issue, note: note),
                               ownBranch: AgentDefaults.ownBranch && project.isGitRepo, issue: issue.ref(), open: false)
         notice = "An agent started on #\(issue.number) in \(project.name)."
     }

@@ -14,6 +14,7 @@ struct NewAgentSheet: View {
     @State private var effort = Effort.medium
     @State private var ownBranch = true
     @State private var access = Access.auto
+    @State private var planMode = false
     @State private var role = ""
     @State private var task = ""
     @State private var attachments: [Attachment] = []
@@ -43,6 +44,7 @@ struct NewAgentSheet: View {
             model = provider == .claude ? AgentDefaults.model : "default"
             effort = AgentDefaults.effort
             access = AgentDefaults.access
+            planMode = AgentDefaults.planMode
             role = AgentDefaults.role
             ownBranch = AgentDefaults.ownBranch && (project?.isGitRepo ?? false)
             // ⌘V with a screenshot or copied files attaches them. Text pastes go through as normal.
@@ -207,6 +209,16 @@ struct NewAgentSheet: View {
                 .labelsHidden().fixedSize()
                 .help(access.explainer)
             }
+            if provider == .claude {
+                GridRow {
+                    Text("Plan mode")
+                    Toggle("Plan mode", isOn: $planMode)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("Writes a plan first and waits for you to approve it before changing anything.")
+                }
+            }
             if project?.isGitRepo ?? false {
                 GridRow {
                     Text("Own branch")
@@ -235,7 +247,7 @@ struct NewAgentSheet: View {
         Task {
             do {
                 try await store.createAgent(projectID: projectID, provider: provider, model: model, effort: effort,
-                                            access: access, role: role, task: task, attachments: attachments, ownBranch: ownBranch && (project?.isGitRepo ?? false))
+                                            access: access, planMode: planMode, role: role, task: task, attachments: attachments, ownBranch: ownBranch && (project?.isGitRepo ?? false))
                 dismiss()
             } catch {
                 self.error = error.localizedDescription
