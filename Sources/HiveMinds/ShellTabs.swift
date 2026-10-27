@@ -177,19 +177,7 @@ struct ShellHost: NSViewRepresentable {
     var focus = true
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        let term = session.view
-        term.removeFromSuperview()
-        term.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(term)
-        NSLayoutConstraint.activate([
-            term.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            term.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            term.topAnchor.constraint(equalTo: container.topAnchor),
-            term.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        if focus { DispatchQueue.main.async { term.window?.makeFirstResponder(term) } }
-        return container
+        TerminalSlot(term: session.view, focus: focus)
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}

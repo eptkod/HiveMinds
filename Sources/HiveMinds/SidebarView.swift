@@ -50,6 +50,14 @@ struct SidebarView: View {
                             Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
                             Button("New Shell Tab") { store.newShellTab(in: project.id) }
                             Button("Show in Finder") { store.revealInFinder(project.path) }
+                            Divider()
+                            Button("Select Agents") {
+                                store.selection = .project(project.id)
+                                store.picking = true
+                            }
+                            .disabled(store.agents(in: project).isEmpty)
+                            Button("Delete Finished Agents…") { store.deleteFinished(in: project) }
+                                .disabled(!store.agents(in: project).contains(where: store.isFinished))
                             if let repo = project.repo, let url = URL(string: "https://github.com/\(repo)") {
                                 Link("Open on GitHub", destination: url)
                             }
@@ -205,6 +213,10 @@ struct AgentRow: View {
     var body: some View {
         let s = store.state(agent.id)
         HStack(spacing: 10) {
+            if store.picking {
+                Button { store.togglePick(agent.id) } label: { PickMark(picked: store.picked.contains(agent.id)) }
+                    .buttonStyle(.plain)
+            }
             StatusDot(status: s.status)
             VStack(alignment: .leading, spacing: 1) {
                 Text(agent.title).fontWeight(.medium).lineLimit(1)

@@ -12,7 +12,10 @@ struct RootView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
-                    if let warning = store.warning {
+                    if store.picking {
+                        SelectionBar()
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else if let warning = store.warning {
                         NoticeBar(text: warning, icon: "exclamationmark.triangle", tint: .orange) { store.warning = nil }
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     } else if let notice = store.notice {
@@ -22,6 +25,7 @@ struct RootView: View {
                 }
                 .animation(Motion.bouncy, value: store.notice)
                 .animation(Motion.bouncy, value: store.warning)
+                .animation(Motion.bouncy, value: store.picking)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -83,6 +87,8 @@ struct RootView: View {
                  ? "Its session stops. Its branch \(agent.branch!) and any commits on it are kept. Its folder is removed only if nothing is left uncommitted."
                  : "Its session stops. Files in the project are not touched.")
         }
+        .modifier(DeleteManyDialog())
+        .onChange(of: store.mode) { _, mode in if mode != .agents { store.endPicking() } }
         .confirmationDialog("Hide \(store.pendingHide.map { "\"\($0.name)\"" } ?? "project")?",
                             isPresented: Binding(get: { store.pendingHide != nil }, set: { if !$0 { store.pendingHide = nil } }),
                             presenting: store.pendingHide) { project in

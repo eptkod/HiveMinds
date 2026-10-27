@@ -116,6 +116,7 @@ struct WorkspaceTabBar: View {
                 .buttonStyle(.borderless)
                 .disabled(store.canvasPins[project.id, default: [:]].isEmpty && store.canvasGroups[project.id, default: [:]].isEmpty)
                 .help("Put every tile back to its automatic size and place")
+                if !store.agents(in: project).isEmpty { SelectButton() }
             }
 
             Menu {
@@ -274,8 +275,10 @@ struct AgentTile<Drag: Gesture>: View {
 
     var body: some View {
         let s = store.state(agent.id)
+        let picked = store.picked.contains(agent.id)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
+                if store.picking { PickMark(picked: picked) }
                 StatusDot(status: s.status, size: 7)
                 Text(agent.title).font(.callout.weight(.medium)).lineLimit(1).layoutPriority(1)
                 Text(s.activity)
@@ -300,6 +303,7 @@ struct AgentTile<Drag: Gesture>: View {
                 }
             }
             .contextMenu { AgentMenu(agent: agent) }
+            .simultaneousGesture(TapGesture().modifiers(.command).onEnded { store.togglePick(agent.id) })
             .tileHeader(drag)
 
             AskBar(agentID: agent.id)
@@ -325,6 +329,17 @@ struct AgentTile<Drag: Gesture>: View {
             }
         }
         .tileChrome(isDragged: isDragged, highlight: s.status == .needsYou)
+        .pickedRing(picked, cornerRadius: 14)
+        // In select mode a click anywhere on the tile ticks it, instead of landing in the terminal.
+        .overlay {
+            if store.picking {
+                Color.black.opacity(picked ? 0 : 0.25)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .contentShape(Rectangle())
+                    .onTapGesture { store.togglePick(agent.id) }
+                    .pointerStyle(.link)
+            }
+        }
     }
 }
 

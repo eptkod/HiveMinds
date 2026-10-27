@@ -24,6 +24,9 @@ enum SettingKey {
     static let historyDays = "agents.historyDays"
     /// Stop the display and Mac from sleeping while any agent is working.
     static let keepAwake = "agents.keepAwake"
+    /// Whether the New Agent sheet was last on "Split up", and the most agents one request becomes.
+    static let splitUp = "agents.splitUp"
+    static let splitMax = "agents.splitMax"
     static let meetingModel = "meetings.model"
     static let meetingSeats = "meetings.seats"
     static let meetingRounds = "meetings.rounds"
@@ -74,6 +77,8 @@ enum SettingDefault {
     static let historyDays = 7
     static let historyDaysChoices = [1, 3, 7, 14, 30]
     static let keepAwake = false
+    static let splitMax = 6
+    static let splitMaxRange = 2...10
     static let meetingModel = "default"
     static let meetingSeats = 3
     static let meetingRounds = 2
@@ -112,6 +117,7 @@ enum AgentDefaults {
     static var costWarning: Double { d.object(forKey: SettingKey.costWarning) as? Double ?? SettingDefault.costWarning }
     static var historyLimit: Int { d.object(forKey: SettingKey.historyLimit) as? Int ?? SettingDefault.historyLimit }
     static var historyDays: Int { d.object(forKey: SettingKey.historyDays) as? Int ?? SettingDefault.historyDays }
+    static var splitMax: Int { d.object(forKey: SettingKey.splitMax) as? Int ?? SettingDefault.splitMax }
 }
 
 /// Where projects downloaded from GitHub go: `<folder>/<repo>`, or `<folder>/<owner>-<repo>` if that name is taken.
@@ -329,6 +335,7 @@ struct AgentSettings: View {
     @AppStorage(SettingKey.historyLimit) private var historyLimit = SettingDefault.historyLimit
     @AppStorage(SettingKey.historyDays) private var historyDays = SettingDefault.historyDays
     @AppStorage(SettingKey.keepAwake) private var keepAwake = SettingDefault.keepAwake
+    @AppStorage(SettingKey.splitMax) private var splitMax = SettingDefault.splitMax
 
     private var isDefault: Bool {
         provider == SettingDefault.defaultProvider && model == SettingDefault.defaultModel
@@ -336,7 +343,7 @@ struct AgentSettings: View {
             && planMode == SettingDefault.planMode
             && autoTitles == SettingDefault.autoTitles && costWarning == SettingDefault.costWarning
             && historyLimit == SettingDefault.historyLimit && historyDays == SettingDefault.historyDays
-            && keepAwake == SettingDefault.keepAwake
+            && keepAwake == SettingDefault.keepAwake && splitMax == SettingDefault.splitMax
     }
 
     private var costExplainer: String {
@@ -407,6 +414,14 @@ struct AgentSettings: View {
             }
 
             Section {
+                SettingRow(explainer: "In New Agent, \"Split up\" turns one request with several things in it into separate agents. This is the most it starts at once. Fewer saves plan usage.") {
+                    Stepper("Split into at most \(splitMax) agents", value: $splitMax, in: SettingDefault.splitMaxRange)
+                }
+            } header: {
+                Text("Split up")
+            }
+
+            Section {
                 SettingRow(explainer: "Your display won't turn off and your Mac won't sleep while any agent is working, even if you leave it alone. Normal sleep comes back once they're all finished or waiting on you.") {
                     Toggle("Stay awake while agents work", isOn: $keepAwake)
                 }
@@ -443,6 +458,7 @@ struct AgentSettings: View {
                         historyDays = SettingDefault.historyDays
                         keepAwake = SettingDefault.keepAwake
                         planMode = SettingDefault.planMode
+                        splitMax = SettingDefault.splitMax
                     }
                     .disabled(isDefault)
                 }

@@ -293,18 +293,26 @@ final class Dictation {
 
 /// Records from the default microphone into 16 kHz mono samples, in memory only.
 /// The audio engine runs only between start and stop, so it costs nothing when you aren't talking.
+/// A fresh engine each time: one kept from before still describes the old microphone after you switch
+/// (AirPods, a headset, a new sample rate), and installing the tap then fails until the app restarts.
 private final class MicRecorder: @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let lock = NSLock()
     private var samples: [Float] = []
     private static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
 
     func start(level: @escaping @Sendable (Double) -> Void) throws {
         lock.withLock { samples = [] }
+        _ = stop()
+        let engine = AVAudioEngine()
         let input = engine.inputNode
         let native = input.outputFormat(forBus: 0)
         guard native.sampleRate > 0, let converter = AVAudioConverter(from: native, to: Self.format) else {
             throw DictationError("No microphone found.")
+        }
+        // A mismatch here would throw an Objective-C exception from installTap, which Swift can't catch.
+        guard input.inputFormat(forBus: 0).sampleRate == native.sampleRate else {
+            throw DictationError("The microphone is still switching over. Try again in a moment.")
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: native) { [weak self] buffer, _ in
             guard let self else { return }
@@ -329,12 +337,14 @@ private final class MicRecorder: @unchecked Sendable {
             input.removeTap(onBus: 0)
             throw error
         }
+        self.engine = engine
     }
 
     func stop() -> [Float] {
-        if engine.isRunning {
+        if let engine {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
+            self.engine = nil
         }
         return lock.withLock { let s = samples; samples = []; return s }
     }

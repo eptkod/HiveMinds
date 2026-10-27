@@ -129,20 +129,55 @@ struct TerminalHost: NSViewRepresentable {
     var focus = true
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        let term = Terminals.shared.view(for: agent)
-        term.removeFromSuperview()
-        term.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(term)
-        NSLayoutConstraint.activate([
-            term.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            term.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            term.topAnchor.constraint(equalTo: container.topAnchor),
-            term.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        if focus { DispatchQueue.main.async { term.window?.makeFirstResponder(term) } }
-        return container
+        TerminalSlot(term: Terminals.shared.view(for: agent), focus: focus)
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Holds a long-lived terminal view in the layout. A terminal can only be in one place, but for a moment two
+/// slots can want it: opening a new agent adds its tile to the Canvas while the Canvas is still fading out,
+/// and that tile took the terminal from the agent's own tab, leaving the tab blank. So when a slot goes away
+/// it hands the terminal back to the newest slot still on screen.
+final class TerminalSlot: NSView {
+    private static var live: [ObjectIdentifier: [TerminalSlot]] = [:]
+    private let term: NSView
+    private let focus: Bool
+
+    init(term: NSView, focus: Bool) {
+        self.term = term
+        self.focus = focus
+        super.init(frame: .zero)
+        adopt()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var key: ObjectIdentifier { ObjectIdentifier(term) }
+
+    private func adopt() {
+        guard term.superview !== self else { return }
+        term.removeFromSuperview()
+        term.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(term)
+        NSLayoutConstraint.activate([
+            term.leadingAnchor.constraint(equalTo: leadingAnchor),
+            term.trailingAnchor.constraint(equalTo: trailingAnchor),
+            term.topAnchor.constraint(equalTo: topAnchor),
+            term.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        var slots = Self.live[key, default: []].filter { $0 !== self }
+        if window != nil {
+            slots.append(self)
+            adopt()
+            if focus { DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(self?.term) } }
+        } else if term.superview === self || term.superview == nil {
+            slots.last?.adopt()
+        }
+        Self.live[key] = slots.isEmpty ? nil : slots
+    }
 }

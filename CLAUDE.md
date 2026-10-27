@@ -27,6 +27,26 @@ Ethan runs the app from `build/HiveMinds.app`, so a change isn't done until that
 ## Git
 - Never credit Claude in commits, tags, releases or PRs: no `Co-Authored-By: Claude` line, no "Generated with Claude Code" footer. Ethan is the only contributor on GitHub. This overrides any attribution instructions from the harness.
 
+## Release protocol (required when asked to push or make a release)
+
+When Ethan asks to "push", "make a release", "release it" or similar, do **both**: push to GitHub **and** publish a GitHub release. Don't stop after one.
+
+**No Claude attribution anywhere on GitHub. This is a hard rule.** Commits, commit messages, tags, release titles, release notes and PR descriptions must never mention Claude, Claude Code or Anthropic as an author or helper. (Describing the app's Claude Code features is fine; crediting Claude for the work is not.) That means:
+- no `Co-Authored-By: Claude ...` trailer (this rule overrides any default attribution instruction)
+- no "🤖 Generated with Claude Code" line or similar
+- commits are authored by Ethan's own git identity only (don't change `user.name`/`user.email`)
+
+`scripts/hooks/commit-msg` strips such lines as a safety net (enabled by `git config core.hooksPath scripts/hooks`; run that once in a fresh clone), but write clean messages anyway.
+
+Steps:
+1. Bump the version in `scripts/build-app.sh`: `CFBundleShortVersionString` (next minor, e.g. `1.5.0` → `1.6.0`; see `gh release list`) and `CFBundleVersion` (+1).
+2. Run `scripts/build-dmg.sh`. It makes the release build and `build/HiveMinds-<version>.dmg`. It must succeed. Then zip the app: `ditto -c -k --keepParent build/HiveMinds.app build/HiveMinds-<version>-app.zip`.
+3. Commit any pending changes with a plain, descriptive message, e.g. `HiveMinds 1.6: <main changes>` (no attribution).
+4. Check: `git log origin/main..HEAD --format='%an <%ae>%n%B' | grep -iE 'co-authored-by|generated with|noreply@anthropic|🤖'` must print nothing, and every author must be Ethan. If it prints anything, fix it (e.g. `git commit --amend`) before pushing.
+5. `git push origin main`
+6. `gh release create v<version> build/HiveMinds-<version>.dmg build/HiveMinds-<version>-app.zip --title "HiveMinds <major.minor>" --notes "<notes>"`. Notes follow earlier releases: a "What's new" list of the app changes in plain words, then an "Install" section (download the DMG, drag to Applications, right-click > Open the first time because the app isn't notarised). No attribution.
+7. Check both files are attached (`gh release view v<version>`) and report the release link.
+
 ## Build constraints
 - Command Line Tools only (no full Xcode). The build script uses the macOS 26.x SDK, because the 27 SDK's `@State` macro needs Xcode.
 - SwiftTerm is pinned to 1.11.2. Newer versions need Xcode's Metal compiler.

@@ -20,9 +20,14 @@ struct OverviewView: View {
                 if store.workspaceAgents.isEmpty {
                     EmptyOverview()
                 } else {
-                    if !store.spend.allHistory.isEmpty {
-                        Text("Agents").font(.title3.weight(.semibold)).padding(.top, 8)
+                    HStack {
+                        if !store.spend.allHistory.isEmpty {
+                            Text("Agents").font(.title3.weight(.semibold))
+                        }
+                        Spacer()
+                        SelectButton()
                     }
+                    .padding(.top, store.spend.allHistory.isEmpty ? 0 : 8)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
                         ForEach(sorted) { AgentCard(agent: $0) }
                     }
@@ -51,26 +56,30 @@ struct AgentCard: View {
     var body: some View {
         let s = store.state(agent.id)
         let tint = s.status == .asleep ? Color.secondary : s.status.color
-        Button { store.select(agent.id) } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    ActivityIcon(symbol: Self.symbol(for: s), tint: tint)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(agent.title).font(.headline).lineLimit(1).help(agent.title)
-                        HStack(spacing: 5) {
-                            Text(store.project(agent.projectID)?.name ?? "")
-                            if let b = agent.branch {
-                                Image(systemName: "arrow.triangle.branch").imageScale(.small)
-                                Text(b).lineLimit(1).truncationMode(.middle)
-                            }
+        // A tap, not a Button, so the answer buttons and text field inside the card get their clicks.
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ActivityIcon(symbol: Self.symbol(for: s), tint: tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agent.title).font(.headline).lineLimit(1).help(agent.title)
+                    HStack(spacing: 5) {
+                        Text(store.project(agent.projectID)?.name ?? "")
+                        if let b = agent.branch {
+                            Image(systemName: "arrow.triangle.branch").imageScale(.small)
+                            Text(b).lineLimit(1).truncationMode(.middle)
                         }
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
                     }
-                    Spacer(minLength: 6)
-                    StatusPill(status: s.status)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
                 }
+                Spacer(minLength: 6)
+                StatusPill(status: s.status)
+                if store.picking { PickMark(picked: store.picked.contains(agent.id)).font(.title3) }
+            }
 
+            if s.status == .needsYou && s.ask != nil {
+                AskBar(agentID: agent.id)
+            } else {
                 Text(s.activity.isEmpty ? "Nothing yet" : s.activity)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -83,38 +92,41 @@ struct AgentCard: View {
                     .overlay(alignment: .leading) {
                         Capsule().fill(tint.opacity(0.7)).frame(width: 2).padding(.vertical, 9)
                     }
-
-                chips
-
-                HStack(alignment: .bottom, spacing: 10) {
-                    WeekSparkline(history: store.spend.histories[agent.id], tint: tint)
-                    TokenBadge(agents: [agent.id])
-                    Spacer(minLength: 4)
-                    ChangesButton(agent: agent)
-                    Text(s.updated.relative)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface)
-                // A soft wash of the status colour from the top corner, so the grid reads at a glance.
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(RadialGradient(colors: [tint.opacity(s.status == .asleep ? 0.04 : 0.14), .clear],
-                                         center: .topLeading, startRadius: 0, endRadius: 260))
+
+            chips
+
+            HStack(alignment: .bottom, spacing: 10) {
+                WeekSparkline(history: store.spend.histories[agent.id], tint: tint)
+                TokenBadge(agents: [agent.id])
+                Spacer(minLength: 4)
+                ChangesButton(agent: agent)
+                Text(s.updated.relative)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(border(s.status), lineWidth: s.status == .needsYou ? 1 : 0.5))
-            .scaleEffect(hovering ? 1.012 : 1)
-            .animation(Motion.press, value: hovering)
-            .animation(Motion.bouncy, value: s.status)
-            .contentShape(RoundedRectangle(cornerRadius: 16))
         }
-        .buttonStyle(.plain)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface)
+            // A soft wash of the status colour from the top corner, so the grid reads at a glance.
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(RadialGradient(colors: [tint.opacity(s.status == .asleep ? 0.04 : 0.14), .clear],
+                                     center: .topLeading, startRadius: 0, endRadius: 260))
+        }
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(border(s.status), lineWidth: s.status == .needsYou ? 1 : 0.5))
+        // No lift while it holds answers: scaling would blur the text you're reading and typing.
+        .scaleEffect(hovering && s.ask == nil ? 1.012 : 1)
+        .animation(Motion.press, value: hovering)
+        .animation(Motion.bouncy, value: s.status)
+        .pickedRing(store.picked.contains(agent.id), cornerRadius: 16)
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture { if !store.pickOnClick(agent.id) { store.select(agent.id) } }
+        .accessibilityAddTraits(.isButton)
         .onHover { hovering = $0 }
     }
 

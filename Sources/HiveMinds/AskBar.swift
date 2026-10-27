@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// What an agent is waiting on, with the answers right there: Allow or Don't Allow for a permission prompt,
-/// the options (or your own words) for a question. Shown on Canvas tiles and in meeting footers, so you
+/// the options (or your own words) for a question, Approve or Keep Planning for a plan. Shown on Overview cards,
+/// Canvas tiles and in meeting footers, so you
 /// don't have to open the agent's terminal. It shows nothing when the agent isn't waiting.
 struct AskBar: View {
     @Environment(AppStore.self) private var store
@@ -16,6 +17,8 @@ struct AskBar: View {
                     PermissionAsk(agentID: agentID, tool: tool, detail: detail)
                 case .questions(let questions):
                     QuestionsAsk(agentID: agentID, questions: questions)
+                case .plan(let plan):
+                    PlanAsk(agentID: agentID, plan: plan)
                 }
             }
             .id(ask.id)
@@ -56,6 +59,54 @@ private struct PermissionAsk: View {
             }
             .controlSize(.small)
         }
+    }
+}
+
+/// The plan it wants to follow, to read through, then approve or send back with what to change.
+private struct PlanAsk: View {
+    @Environment(AppStore.self) private var store
+    let agentID: UUID
+    let plan: String
+    @State private var feedback = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Wants you to approve its plan", systemImage: "checklist")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.orange)
+            if !plan.isEmpty {
+                ScrollView {
+                    Text(Self.markdown(plan))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 160)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            TextField("What to change (optional)", text: $feedback)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .onSubmit { if !feedback.trimmingCharacters(in: .whitespaces).isEmpty { store.keepPlanning(agentID, feedback) } }
+            HStack(spacing: 8) {
+                Button("Approve") { store.approvePlan(agentID) }
+                    .buttonStyle(.glassProminent)
+                    .help(store.agent(agentID)?.access == .manual
+                          ? "Start on the plan. It still asks before each edit."
+                          : "Start on the plan, keeping the conversation so far")
+                Button("Keep Planning") { store.keepPlanning(agentID, feedback) }
+                    .buttonStyle(.glass)
+                    .help("Send it back with what you typed above. Left empty, it stops and waits for you.")
+            }
+            .controlSize(.small)
+        }
+    }
+
+    /// Bold, code and links from the plan's Markdown; headings and lists stay as written.
+    private static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
     }
 }
 

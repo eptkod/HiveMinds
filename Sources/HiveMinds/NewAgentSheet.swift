@@ -23,8 +23,17 @@ struct NewAgentSheet: View {
     @State private var showOptions = false
     @State private var error: String?
     @State private var working = false
+    /// "Split up" turns one request into several agents. Remembered, so a play-test list goes the same way next time.
+    @AppStorage(SettingKey.splitUp) private var splitting = false
+    /// Split up's model and effort, where "auto" and nil let the planner pick for each agent.
+    @State private var splitModel = "auto"
+    @State private var splitEffort: Effort?
 
     private var project: Project? { projectID.flatMap { store.project($0) } }
+    /// Agents working side by side get their own branches, whatever the default, so they don't trip over each other.
+    private var defaultOwnBranch: Bool { (isSplit || AgentDefaults.ownBranch) && (project?.isGitRepo ?? false) }
+    /// The planner runs on Claude Code, so splitting needs it installed.
+    private var isSplit: Bool { splitting && store.tools.claude != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,7 +55,7 @@ struct NewAgentSheet: View {
             access = AgentDefaults.access
             planMode = AgentDefaults.planMode
             role = AgentDefaults.role
-            ownBranch = AgentDefaults.ownBranch && (project?.isGitRepo ?? false)
+            ownBranch = defaultOwnBranch
             // ⌘V with a screenshot or copied files attaches them. Text pastes go through as normal.
             pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
@@ -104,12 +113,24 @@ struct NewAgentSheet: View {
                     }
                     .labelsHidden()
                     .fixedSize()
-                    .onChange(of: projectID) { _, _ in ownBranch = AgentDefaults.ownBranch && (project?.isGitRepo ?? false) }
+                    .onChange(of: projectID) { _, _ in ownBranch = defaultOwnBranch }
+                }
+                if store.tools.claude != nil {
+                    Picker("Kind", selection: $splitting.animation(Motion.bouncy)) {
+                        Text("One agent").tag(false)
+                        Text("Split up").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Split up hands each part of a list to its own agent, grouping parts that share code so no work is repeated.")
+                    .onChange(of: splitting) { _, _ in ownBranch = defaultOwnBranch }
                 }
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                TextField("What should it work on?", text: $task, axis: .vertical)
+                TextField(isSplit ? "List everything you want done. Each part goes to an agent." : "What should it work on?",
+                          text: $task, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(4...10)
@@ -152,6 +173,10 @@ struct NewAgentSheet: View {
             }
             .foregroundStyle(.secondary)
 
+            if isSplit && (project?.isGitRepo ?? false) && !ownBranch {
+                Label("Without their own branches, the agents share one folder and may get in each other's way.", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if access == .unrestricted {
                 Label(Access.unrestricted.explainer, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
@@ -163,10 +188,10 @@ struct NewAgentSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(working ? "Starting…" : "Start") { create() }
+                Button(working ? "Starting…" : isSplit ? "Split Up" : "Start") { create() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.glassProminent)
-                    .disabled(working || projectID == nil)
+                    .disabled(working || projectID == nil || (isSplit && task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
         }
         .padding(24)
@@ -187,19 +212,31 @@ struct NewAgentSheet: View {
             if provider.models.count > 1 {
                 GridRow {
                     Text("Model")
-                    Picker("Model", selection: $model) {
-                        ForEach(provider.models, id: \.self) { Text($0 == "default" ? "Default" : $0.capitalized).tag($0) }
+                    Picker("Model", selection: isSplit ? $splitModel : $model) {
+                        ForEach((isSplit ? ["auto"] : []) + provider.models, id: \.self) { m in
+                            Text(m == "auto" ? "Auto, per agent" : m == "default" ? "Default" : m.capitalized).tag(m)
+                        }
                     }
                     .labelsHidden().fixedSize()
+                    .help(isSplit ? "Auto gives each agent the cheapest model that will do its part well." : "")
                 }
             }
             GridRow {
                 Text("Effort")
-                Picker("Effort", selection: $effort) {
-                    ForEach(Effort.allCases) { Text($0.label).tag($0) }
+                if isSplit {
+                    Picker("Effort", selection: $splitEffort) {
+                        Text("Auto, per agent").tag(Effort?.none)
+                        ForEach(Effort.allCases) { Text($0.label).tag(Optional($0)) }
+                    }
+                    .labelsHidden().fixedSize()
+                    .help("Auto lets each agent think as hard as its part needs.")
+                } else {
+                    Picker("Effort", selection: $effort) {
+                        ForEach(Effort.allCases) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                    .help("How hard it thinks before answering. Higher is slower and uses more of your plan.")
                 }
-                .labelsHidden().fixedSize()
-                .help("How hard it thinks before answering. Higher is slower and uses more of your plan.")
             }
             GridRow {
                 Text("Access")
@@ -242,6 +279,13 @@ struct NewAgentSheet: View {
 
     private func create() {
         guard let projectID else { return }
+        if isSplit {
+            store.splitUp(projectID: projectID, provider: provider, model: splitModel == "auto" ? nil : splitModel, effort: splitEffort,
+                          access: access, planMode: planMode, role: role, request: task, attachments: attachments,
+                          ownBranch: ownBranch && (project?.isGitRepo ?? false))
+            dismiss()
+            return
+        }
         working = true
         error = nil
         Task {

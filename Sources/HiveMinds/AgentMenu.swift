@@ -22,7 +22,12 @@ struct AgentMenu: View {
             Button("Copy Branch Name") { copyToClipboard(branch) }
         }
         Divider()
-        Button("Delete Agent…", role: .destructive) { store.pendingDelete = agent }
+        Button(store.picked.contains(agent.id) ? "Deselect" : "Select") { store.togglePick(agent.id) }
+        if store.picked.count > 1 && store.picked.contains(agent.id) {
+            Button("Delete \(store.picked.count) Selected Agents…", role: .destructive) { store.deletePicked() }
+        } else {
+            Button("Delete Agent…", role: .destructive) { store.pendingDelete = agent }
+        }
     }
 }
 

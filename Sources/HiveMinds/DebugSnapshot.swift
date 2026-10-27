@@ -30,6 +30,10 @@ enum DebugSnapshot {
             runTestHide(store: store, path: path)
             return
         }
+        if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_SPLIT"] {
+            runTestSplit(store: store, path: path)
+            return
+        }
         if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_ISSUE"] {
             runTestIssue(store: store, path: path)
             return
@@ -48,7 +52,18 @@ enum DebugSnapshot {
             ("history", { store.mode = .agents; store.selection = .history }),
             ("newagent", { store.mode = .agents; store.selection = .overview; store.beginNewAgent(in: nil) }),
         ]
-        steps.append(("settings", { store.showingNewAgent = false; if let menu = NSApp.mainMenu?.items.first?.submenu,
+        // Select mode, on the Overview and then a project's Canvas, with the finished agents ticked. Nothing is deleted.
+        steps.insert(("picking", { store.selection = .overview; store.picking = true
+            store.picked = Set(store.pickScope.filter(store.isFinished).map(\.id)) }), at: 1)
+        if let p = store.shownProjects.first(where: { !store.agents(in: $0).isEmpty }) {
+            steps.insert(("canvas-picking", { store.selection = .project(p.id)
+                store.picked = Set(store.agents(in: p).prefix(2).map(\.id)) }), at: 2)
+            steps.insert(("picking-done", { store.endPicking() }), at: 3)
+        }
+        // The sheet in Split up mode, then the switch goes back to how it was.
+        let splitting = UserDefaults.standard.object(forKey: SettingKey.splitUp)
+        steps.append(("newagent-split", { UserDefaults.standard.set(true, forKey: SettingKey.splitUp) }))
+        steps.append(("settings", { store.showingNewAgent = false; UserDefaults.standard.set(splitting, forKey: SettingKey.splitUp); if let menu = NSApp.mainMenu?.items.first?.submenu,
                let i = menu.items.firstIndex(where: { $0.keyEquivalent == "," }) { menu.performActionForItem(at: i) } }))
         steps.append(("settings-agents", { UserDefaults.standard.set("agents", forKey: SettingKey.settingsTab) }))
         steps.append(("settings-projects", { UserDefaults.standard.set("projects", forKey: SettingKey.settingsTab) }))
@@ -376,6 +391,38 @@ enum DebugSnapshot {
             log("ASK-DONE \(store.state(id).activity)")
             if let a = store.agent(id) { await store.deleteAgent(a) }
             exit(0)
+        }
+    }
+
+    /// `HIVEMINDS_TEST_SPLIT=/path/to/repo` splits a three-bug request, two of them in the same file, and prints
+    /// the agents it started (title, model, effort, branch, prompt), then deletes them. Expect two agents.
+    /// `HIVEMINDS_SPLIT_MODEL=nope` makes the planner fail, to check the one-agent fallback.
+    private static func runTestSplit(store: AppStore, path: String) {
+        let project = store.addProject(path: path, repo: nil)
+        func log(_ s: String) { print(s); fflush(stdout) }
+        let request = """
+        I play-tested the game and found these:
+        1. The score shows 1 point too many after every coin (score.js).
+        2. The high score never saves when the game ends (score.js).
+        3. The jump button text says "Jmup" on the title screen (menu.js).
+        """
+        let before = Set(store.agents.map(\.id))
+        store.splitUp(projectID: project.id, provider: .claude, model: nil, effort: nil, access: .manual, planMode: false,
+                      role: "", request: request, attachments: [], ownBranch: true)
+        Task {
+            for _ in 0..<120 {
+                try? await Task.sleep(for: .seconds(1))
+                if store.notice?.hasPrefix("Splitting") == false { break }
+            }
+            let made = store.agents.filter { !before.contains($0.id) }
+            log("SPLIT-NOTICE \(store.notice ?? "-") error=\(store.errorMessage ?? "-")")
+            for a in made {
+                log("SPLIT-AGENT title=\(a.title) model=\(a.model) effort=\(a.effort?.rawValue ?? "-") branch=\(a.branch ?? "-")")
+                log("SPLIT-PROMPT \((a.pendingTask ?? "").replacingOccurrences(of: "\n", with: " | "))")
+            }
+            for a in made { await store.deleteAgent(a) }
+            store.removeProject(project)
+            exit(made.isEmpty ? 1 : 0)
         }
     }
 

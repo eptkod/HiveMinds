@@ -30,6 +30,11 @@ final class AppStore {
     var showingNewAgent = false
     var newAgentProject: UUID?
     var pendingDelete: Agent?
+    /// Select mode: the agents you've ticked on the Canvas, Overview or sidebar, for deleting in one go.
+    var picking = false
+    var picked: Set<UUID> = []
+    /// Several agents, waiting for you to confirm deleting them all.
+    var pendingDeleteMany: [Agent]?
     /// A project with agents still at work, waiting for you to confirm hiding it.
     var pendingHide: Project?
     var tools = Tools()
@@ -164,12 +169,14 @@ final class AppStore {
         var hooks: [String: Any] = [:]
         for e in events { hooks[e] = [["hooks": [["type": "command", "command": command]]]] }
         writeStatusLineScript()
+        // Agents never credit Claude in commits or PRs: no Co-Authored-By trailer, no "Generated with" footer.
+        let noCredit: [String: Any] = ["attribution": ["commit": "", "pr": ""], "includeCoAuthoredBy": false]
         let settings: [String: Any] = [
             "hooks": hooks,
             "statusLine": ["type": "command", "command": "/bin/sh '\(statusLineScript.path)'"],
-        ]
+        ].merging(noCredit) { $1 }
         // Claude Code asks this command for the key. It prints our variable, so the key itself never touches disk.
-        let keyHelper = ["apiKeyHelper": "printenv \(SignIn.envName(for: .claude))"]
+        let keyHelper = ["apiKeyHelper": "printenv \(SignIn.envName(for: .claude))"].merging(noCredit) { $1 }
         for (file, contents) in [(hooksFile, settings), (hooksWithKeyFile, settings.merging(keyHelper) { $1 }),
                                  (keyOnlyFile, keyHelper)] {
             if let data = try? JSONSerialization.data(withJSONObject: contents, options: [.prettyPrinted, .sortedKeys]) {
@@ -429,14 +436,14 @@ final class AppStore {
 
     func createAgent(projectID: UUID, provider: Provider, model: String, effort: Effort = AgentDefaults.effort,
                      access: Access = AgentDefaults.access, planMode: Bool = false, role: String, task: String, attachments: [Attachment] = [], ownBranch: Bool,
-                     issue: IssueRef? = nil, open: Bool = true) async throws {
+                     issue: IssueRef? = nil, title: String? = nil, open: Bool = true) async throws {
         guard let project = project(projectID) else { throw NewAgentError("Pick a project first.") }
         let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
         var cwd = project.path
         var branch: String?
         if ownBranch {
             let suffix = String(UUID().uuidString.prefix(4)).lowercased()
-            let name = issue.map { "issue-\($0.number)-\($0.title)" } ?? (t.isEmpty ? "agent" : Agent.roughTitle(t))
+            let name = issue.map { "issue-\($0.number)-\($0.title)" } ?? title ?? (t.isEmpty ? "agent" : Agent.roughTitle(t))
             (cwd, branch) = try await makeWorktree(project: project, slug: "\(slugify(name))-\(suffix)")
         }
         // Attachments are copied into the agent's own folder, where it can read them without asking,
@@ -454,14 +461,15 @@ final class AppStore {
                           cwd: cwd, branch: branch, pendingTask: prompt.isEmpty ? nil : prompt)
         agent.issue = issue
         if planMode && provider == .claude { agent.startsInPlan = true }
-        // An issue already has a title someone wrote, so it doesn't need one from Haiku.
-        if let issue { agent.title = Agent.roughTitle(issue.title) } else if !t.isEmpty { agent.title = Agent.roughTitle(t) }
+        // An issue already has a title someone wrote, and a split's planner names each task, so neither needs one from Haiku.
+        if let issue { agent.title = Agent.roughTitle(issue.title) } else if let title { agent.title = Agent.roughTitle(title) }
+        else if !t.isEmpty { agent.title = Agent.roughTitle(t) }
         agents.append(agent)
         live[agent.id] = LiveState(status: .starting, activity: "Starting up")
         save()
         // Not opened: start it in the background, the way meeting seats run.
         if open { select(agent.id) } else { _ = Terminals.shared.view(for: agent) }
-        if issue == nil && !t.isEmpty { nameChat(agent.id, from: t) }
+        if issue == nil && title == nil && !t.isEmpty { nameChat(agent.id, from: t) }
     }
 
     /// Asks Haiku for a short title for the chat, in the background. The rough title stays if that fails.
@@ -498,7 +506,7 @@ final class AppStore {
     }
 
     /// Keeps the agents' folders out of `git status` without changing any file in the repository.
-    private func excludeFromGit(project: Project, pattern: String) {
+    func excludeFromGit(project: Project, pattern: String) {
         let file = "\(project.path)/.git/info/exclude"
         let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
         guard !current.split(separator: "\n").contains(Substring(pattern)) else { return }
@@ -537,13 +545,34 @@ final class AppStore {
     /// Removes the agent. Its worktree goes too, but only if it has no uncommitted changes; its branch,
     /// and so any commits on it, always stays.
     func deleteAgent(_ agent: Agent) async {
+        if await !removeAgent(agent) {
+            notice = "The folder for \"\(agent.title)\" was kept because it has changes that aren't committed: \(agent.cwd)"
+        }
+    }
+
+    /// Deletes several agents, the same way as one at a time, and says once what happened.
+    func deleteAgents(_ list: [Agent]) async {
+        var kept: [Agent] = []
+        for agent in list where await !removeAgent(agent) { kept.append(agent) }
+        picked.subtract(list.map(\.id))
+        picking = false
+        let deleted = "Deleted \(list.count) agent\(list.count == 1 ? "" : "s")."
+        notice = switch kept.count {
+        case 0: deleted
+        case 1: "\(deleted) The folder for \"\(kept[0].title)\" was kept because it has changes that aren't committed: \(kept[0].cwd)"
+        default: "\(deleted) \(kept.count) of their folders were kept because they have changes that aren't committed."
+        }
+    }
+
+    /// Returns false when the agent's worktree was kept because it has uncommitted changes.
+    private func removeAgent(_ agent: Agent) async -> Bool {
         Terminals.shared.stop(agent.id)
+        var removedFolder = true
         if agent.branch != nil, let git = tools.git, let project = project(agent.projectID) {
             let r = await Shell.run(git, ["-C", project.path, "worktree", "remove", agent.cwd])
-            if !r.ok {
-                notice = "The folder for \"\(agent.title)\" was kept because it has changes that aren't committed: \(agent.cwd)"
-            }
+            removedFolder = r.ok
         }
+        picked.remove(agent.id)
         remember([agent])
         agents.removeAll { $0.id == agent.id }
         live.removeValue(forKey: agent.id)
@@ -553,6 +582,7 @@ final class AppStore {
         if selection == .agent(agent.id) { selection = .project(agent.projectID) }
         save()
         updateBadge()
+        return removedFolder
     }
 
     /// Puts a project's agents in the given order. Agents in other projects keep their places.
@@ -740,6 +770,8 @@ final class AppStore {
             if event["tool_name"] as? String == "AskUserQuestion" {
                 setStatus(id, .needsYou, "Has a question for you", cue: .question)
                 setAsk(id, .questions(AskQuestion.parse(event["tool_input"] as? [String: Any] ?? [:])))
+            } else if event["tool_name"] as? String == "ExitPlanMode" {
+                askToApprovePlan(id, event["tool_input"] as? [String: Any] ?? [:])
             } else {
                 setStatus(id, .working, describeTool(event))
             }
@@ -749,6 +781,8 @@ final class AppStore {
             if tool == "AskUserQuestion" {
                 setStatus(id, .needsYou, "Has a question for you", cue: .question)
                 setAsk(id, .questions(AskQuestion.parse(input)))
+            } else if tool == "ExitPlanMode" {
+                askToApprovePlan(id, input)
             } else {
                 setStatus(id, .needsYou, "Wants permission to use \(tool)", cue: .permission)
                 setAsk(id, .permission(tool: tool, detail: permissionDetail(tool, input)))
@@ -758,7 +792,8 @@ final class AppStore {
             let message = event["message"] as? String ?? "Waiting for you"
             if type == "idle_prompt" {
                 if state(id).status == .working { setStatus(id, .needsYou, message) }
-            } else if state(id).activity != "Has a question for you" {
+            } else if state(id).ask == nil {
+                // When it's already waiting on something it can be answered from a tile, that line says more.
                 setStatus(id, .needsYou, message, cue: type == "permission_prompt" ? .permission : .question)
             }
         case "StopFailure":
@@ -775,6 +810,12 @@ final class AppStore {
         default:
             break
         }
+    }
+
+    private func askToApprovePlan(_ id: UUID, _ input: [String: Any]) {
+        if case .plan? = state(id).ask?.kind { return }
+        setStatus(id, .needsYou, "Wants you to approve its plan", cue: .question)
+        setAsk(id, .plan((input["plan"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)))
     }
 
     private func setAsk(_ id: UUID, _ kind: PendingAsk.Kind) {
@@ -808,6 +849,34 @@ final class AppStore {
         guard state(id).ask != nil else { return }
         Terminals.shared.press(id, ["\u{1b}"])
         setStatus(id, .idle, "You said no. Tell it what to do instead.")
+    }
+
+    /// Approves a plan and lets it start, keeping the conversation. Claude Code's list of choices changes with
+    /// the session (some start with "clear context", some offer bypass or auto mode), so the number to press is
+    /// read off the terminal: "manually approve edits" for an agent on Manual review, otherwise the first "Yes"
+    /// that keeps the context.
+    func approvePlan(_ id: UUID) {
+        guard case .plan? = state(id).ask?.kind else { return }
+        let options = Terminals.shared.menuOptions(id)
+        let keep = options.filter { $0.label.hasPrefix("Yes") && !$0.label.localizedCaseInsensitiveContains("clear context") }
+        let manual = agent(id)?.access == .manual ? keep.first { $0.label.localizedCaseInsensitiveContains("manually") } : nil
+        guard let pick = manual ?? keep.first else {
+            warning = "Couldn't find the plan's choices in \"\(agent(id)?.title ?? "the agent")\"'s terminal. Open it to approve the plan there."
+            return
+        }
+        Terminals.shared.press(id, ["\(pick.number)"])
+        setStatus(id, .working, "Plan approved")
+    }
+
+    /// Sends a plan back with what to change, so it keeps planning. With nothing to say, it just stops and waits.
+    func keepPlanning(_ id: UUID, _ feedback: String) {
+        guard case .plan? = state(id).ask?.kind else { return }
+        let text = feedback.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+        guard !text.isEmpty, let no = Terminals.shared.menuOptions(id).last(where: { $0.label.hasPrefix("No, keep planning") }) else {
+            return decline(id)
+        }
+        Terminals.shared.press(id, ["\(no.number)", text, "\r"])
+        setStatus(id, .working, "Reworking the plan")
     }
 
     /// Answers every question in an AskUserQuestion prompt: an option's index, or your own words.

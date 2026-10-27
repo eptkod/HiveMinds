@@ -28,7 +28,7 @@ If you run more than one coding agent at a time, the terminal windows pile up fa
 
 ### See everything at once
 
-The **Canvas** shows every agent, browser tab and shell in a project side by side, and each one works right there. Drag tiles around, make the important ones bigger, and HiveMinds tells you (with a sound, if you like) when an agent finishes or needs an answer.
+The **Canvas** shows every agent, browser tab and shell in a project side by side, and each one works right there. Drag tiles around, make the important ones bigger, and HiveMinds tells you (with a sound, if you like) when an agent finishes or needs an answer. Permission prompts, questions and plans to approve can be answered right on its tile, or on its card in the Overview, without opening the terminal.
 
 ### Give each agent its own branch
 
@@ -37,6 +37,10 @@ An agent can work on its own copy of the project, so several can change code at 
 <p align="center">
   <img src="docs/screenshots/agent.png" alt="An agent on its own branch, showing the change it made">
 </p>
+
+### Hand over a whole list
+
+Found six bugs while play-testing? In New Agent, switch to **Split up** and paste the whole list, screenshots included. HiveMinds takes a quick look at the code, groups the bugs that touch the same files, and starts one agent per group, each on its own branch with the cheapest model that will do the job. They show up on the Canvas a few seconds later.
 
 ### Hold meetings
 
@@ -107,7 +111,7 @@ open build/HiveMinds.app
 scripts/build-dmg.sh      # packages build/HiveMinds-<version>.dmg
 ```
 
-Use `scripts/build-app.sh debug` for a debug build while you work.
+Use `scripts/build-app.sh debug` for a debug build while you work. To publish a release, follow the release protocol in `CLAUDE.md`. Run `git config core.hooksPath scripts/hooks` once after cloning to turn on the commit-message hook.
 
 ## Learn more
 

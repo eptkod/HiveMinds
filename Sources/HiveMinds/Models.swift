@@ -206,6 +206,8 @@ struct PendingAsk: Identifiable {
         /// `detail` is what it wants to do: the command, or the file it wants to change.
         case permission(tool: String, detail: String)
         case questions([AskQuestion])
+        /// It finished planning (plan mode) and wants the plan approved before it starts work.
+        case plan(String)
     }
 }
 

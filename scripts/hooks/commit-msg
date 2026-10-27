@@ -1,0 +1,7 @@
+#!/bin/bash
+# Removes any line crediting Claude or Anthropic from a commit message. Ethan is the only contributor.
+# Enabled with: git config core.hooksPath scripts/hooks
+set -euo pipefail
+MSG="$1"
+grep -viE '^co-authored-by:.*(claude|anthropic)|generated with.*claude|noreply@anthropic\.com' "$MSG" > "$MSG.tmp" || true
+mv "$MSG.tmp" "$MSG"

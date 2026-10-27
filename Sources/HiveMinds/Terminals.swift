@@ -125,6 +125,21 @@ final class Terminals: NSObject, LocalProcessTerminalViewDelegate {
         }
     }
 
+    /// The numbered choices of the menu on screen in an agent's terminal ("❯ 1. Yes, auto-accept edits"),
+    /// read from the bottom up so a numbered list higher up (in a plan, say) doesn't count.
+    func menuOptions(_ id: UUID) -> [(number: Int, label: String)] {
+        guard let terminal = views[id]?.getTerminal() else { return [] }
+        var found: [Int: String] = [:]
+        for row in stride(from: terminal.rows - 1, through: 0, by: -1) {
+            guard let line = terminal.getLine(row: row)?.translateToString(trimRight: true) else { continue }
+            let text = line.trimmingCharacters(in: .whitespaces).drop { "❯›>│ ".contains($0) }
+            guard let dot = text.firstIndex(of: "."), let n = Int(text[..<dot]), found[n] == nil else { continue }
+            if found.keys.contains(where: { $0 < n }) { break }
+            found[n] = text[text.index(after: dot)...].trimmingCharacters(in: .whitespaces)
+        }
+        return found.sorted { $0.key < $1.key }.map { (number: $0.key, label: $0.value) }
+    }
+
     #if DEBUG
     /// Sends keys as they are, for test runs.
     func sendKeys(_ id: UUID, _ keys: String) { views[id]?.send(txt: keys) }
