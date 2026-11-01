@@ -8,12 +8,14 @@ struct HiveMindsApp: App {
 
     var body: some Scene {
         Window("HiveMinds", id: "main") {
-            RootView()
-                .environment(store)
-                .frame(minWidth: 920, minHeight: 580)
-                .preferredColorScheme(.dark)
-                .modifier(WindowAppearance())
-                .focusedSceneValue(\.isMainWindow, true)
+            Group {
+                if LocationCheck.shared.isChecking { LocationCheckingView() } else { RootView() }
+            }
+            .environment(store)
+            .frame(minWidth: 920, minHeight: 580)
+            .preferredColorScheme(.dark)
+            .modifier(WindowAppearance())
+            .focusedSceneValue(\.isMainWindow, true)
         }
         .defaultSize(width: 1260, height: 820)
         .windowToolbarStyle(.unified)
@@ -104,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
         SidewaysScroll.install()
         Dictation.shared.refresh()
+        LocationCheck.shared.run()
         #if DEBUG
         _ = DictationTest.runIfRequested()
         #endif

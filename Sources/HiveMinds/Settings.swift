@@ -37,6 +37,8 @@ enum SettingKey {
     static let meetingSplitModels = "meetings.splitModels"
     static let meetingOtherModel = "meetings.otherModel"
     static let settingsTab = "settings.tab"
+    /// Check at startup, on Wi-Fi, that the default provider is offered in the internet address's country.
+    static let locationCheck = "location.check"
     /// Which part of the GitHub page is showing: repositories or issues.
     static let githubTab = "github.tab"
     static let projectsFolder = "projects.folder"
@@ -101,6 +103,8 @@ enum SettingDefault {
     static let voiceModel = "base.en"
     static let voiceVocabulary = ""
     static let sound = true
+    /// Off until asked for, since it sends a request to Cloudflare at every launch.
+    static let locationCheck = false
 }
 
 /// The agent settings as plain values, for code outside a view (the New Agent sheet, the store).
@@ -257,6 +261,9 @@ struct SettingsView: View {
             }
             Tab("Accounts", systemImage: "key", value: "accounts") {
                 AccountSettings()
+            }
+            Tab("Location", systemImage: "location", value: "location") {
+                LocationSettings()
             }
         }
         .frame(width: 540)

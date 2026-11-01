@@ -67,6 +67,7 @@ enum DebugSnapshot {
                let i = menu.items.firstIndex(where: { $0.keyEquivalent == "," }) { menu.performActionForItem(at: i) } }))
         steps.append(("settings-agents", { UserDefaults.standard.set("agents", forKey: SettingKey.settingsTab) }))
         steps.append(("settings-projects", { UserDefaults.standard.set("projects", forKey: SettingKey.settingsTab) }))
+        steps.append(("settings-location", { UserDefaults.standard.set("location", forKey: SettingKey.settingsTab) }))
         // Shows the split-model rows, then puts the setting back as it was.
         let split = UserDefaults.standard.object(forKey: SettingKey.meetingSplitModels)
         steps.append(("settings-meetings", { UserDefaults.standard.set(true, forKey: SettingKey.meetingSplitModels)

@@ -67,6 +67,7 @@ Every agent shows its tokens and an estimated cost. The Overview charts your act
 - **History:** every agent you've run, including ones deleted in the last week, so you can pick an old conversation back up.
 - **Voice dictation:** hold Right Option and talk instead of typing, or press Right Option + Space to keep listening hands-free and tap Right Option to finish. If the words miss, ⌥⌘V types them again. It runs on your Mac. Off until you turn it on.
 - **Stay awake:** keep the Mac from sleeping while agents are still working.
+- **Startup region check:** optional. On Wi-Fi, HiveMinds looks up the country of your internet address (never your precise location), and if your default provider isn't offered there, the only choice is to quit.
 - **Tidy sidebar:** drag projects into the order you like, and hide the ones you're done with.
 - **Light on your Mac:** native SwiftUI, no busy animations, and nothing running when you're idle.
 

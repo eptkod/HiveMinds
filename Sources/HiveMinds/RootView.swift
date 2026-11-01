@@ -106,6 +106,7 @@ struct RootView: View {
             #if DEBUG
             print("BOOT start"); fflush(stdout)
             #endif
+            if let warning = LocationCheck.shared.warning { store.warning = warning }
             await store.bootstrap()
             #if DEBUG
             DebugSnapshot.runIfRequested(store: store)
