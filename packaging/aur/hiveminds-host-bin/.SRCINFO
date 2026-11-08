@@ -1,0 +1,22 @@
+pkgbase = hiveminds-host-bin
+	pkgdesc = Runs HiveMinds projects and Claude Code agents on this machine, for the HiveMinds Mac app on your network (prebuilt)
+	pkgver = 0.5.0
+	pkgrel = 1
+	url = https://github.com/eptkod/HiveMinds
+	install = hiveminds-host.install
+	arch = x86_64
+	license = MIT
+	depends = avahi
+	depends = gcc-libs
+	depends = git
+	depends = glibc
+	optdepends = claude-code: runs the agents (or use Claude Code's own installer)
+	optdepends = github-cli: lets agents work with GitHub
+	provides = hiveminds-host
+	conflicts = hiveminds-host
+	options = !strip
+	options = !debug
+	source = hiveminds-host-bin-0.5.0.tar.gz::https://github.com/eptkod/HiveMinds/releases/download/v1.8.0/hiveminds-host-0.5.0-linux-x86_64.tar.gz
+	sha256sums = b0f5e390bb90248177fbb436f9dcbc41df6d09b8e19a0d4dde8862409ccc8282
+
+pkgname = hiveminds-host-bin

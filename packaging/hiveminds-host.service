@@ -1,0 +1,19 @@
+# HiveMinds Host as a systemd user service. Enable it with: systemctl --user enable --now hiveminds-host
+# To keep it running when you're logged out, and start it at boot: sudo loginctl enable-linger $USER
+[Unit]
+Description=HiveMinds Host: runs HiveMinds projects and agents on this machine
+Documentation=https://github.com/eptkod/HiveMinds/blob/main/docs/GUIDE.md
+# A second host already running, or a broken config, shouldn't retry forever.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+ExecStart=/usr/bin/hiveminds-host serve
+Restart=on-failure
+RestartSec=5
+# The host stops its own agents on SIGTERM (each gets 3 s). Anything left after that is killed.
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

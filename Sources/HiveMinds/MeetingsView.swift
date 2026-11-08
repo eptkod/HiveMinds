@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// The Meetings page: the formats and past meetings, or the open meeting room.
 struct MeetingsView: View {
@@ -61,7 +63,7 @@ struct MeetingListView: View {
                     Button { store.beginNewMeeting() } label: { Label("New Meeting", systemImage: "plus") }
                         .buttonStyle(.glassProminent)
                         .controlSize(.large)
-                        .disabled(store.shownProjects.isEmpty)
+                        .disabled(store.localShownProjects.isEmpty)
                 }
 
                 if !sorted.isEmpty {
@@ -90,12 +92,12 @@ struct MeetingListView: View {
                                 .contentShape(RoundedRectangle(cornerRadius: 16))
                             }
                             .buttonStyle(.squish)
-                            .disabled(store.shownProjects.isEmpty)
+                            .disabled(store.localShownProjects.isEmpty)
                             .help("Start a \(p.name) meeting")
                         }
                     }
                 }
-                if store.shownProjects.isEmpty {
+                if store.localShownProjects.isEmpty {
                     Text("Meetings work inside a project. Add one from the sidebar first.")
                         .foregroundStyle(.secondary)
                 }
@@ -299,7 +301,7 @@ struct NewMeetingSheet: View {
                 Spacer()
                 if !projectGiven {
                     Picker("Project", selection: $projectID) {
-                        ForEach(store.shownProjects) { Text($0.name).tag(Optional($0.id)) }
+                        ForEach(store.localShownProjects) { Text($0.name).tag(Optional($0.id)) }
                     }
                     .labelsHidden()
                     .fixedSize()
@@ -381,9 +383,9 @@ struct NewMeetingSheet: View {
         .padding(24)
         .frame(width: 540)
         .onAppear {
-            let inferred = store.currentProjectID ?? (store.shownProjects.count == 1 ? store.shownProjects.first?.id : nil)
+            let inferred = store.currentProjectID.flatMap { store.isRemoteProject($0) ? nil : $0 } ?? (store.localShownProjects.count == 1 ? store.localShownProjects.first?.id : nil)
             projectGiven = inferred != nil
-            projectID = inferred ?? store.shownProjects.first?.id
+            projectID = inferred ?? store.localShownProjects.first?.id
             pattern = store.newMeetingPattern ?? .debate
             seats = MeetingDefaults.seats
             rounds = MeetingDefaults.rounds

@@ -1,14 +1,7 @@
 import SwiftUI
 import AppKit
-
-/// The GitHub issue an agent was started on. Its pull request says "Fixes #number".
-struct IssueRef: Codable, Hashable {
-    /// owner/name
-    var repo: String
-    var number: Int
-    var title: String
-    var url: String
-}
+import HiveMindsCore
+import HiveMindsProtocol
 
 extension GitHubModel {
     struct Issue: Decodable, Identifiable, Hashable {
@@ -114,15 +107,17 @@ extension AppStore {
     /// Starts an agent on an issue with the defaults from Settings > Agents, in the background,
     /// so you can send several in a row without leaving the GitHub page.
     func startAgent(on issue: GitHubModel.Issue, note: String = "") async throws {
-        guard let project = projects.first(where: { $0.repo == issue.repo }) else {
+        // This Mac's copy first, then a host's.
+        guard let project = projects.first(where: { $0.repo == issue.repo && !isRemoteProject($0.id) })
+                ?? projects.first(where: { $0.repo == issue.repo }) else {
             throw NewAgentError("Add \(issue.repo) as a project first.")
         }
-        let available = tools.providers
+        let available = isRemoteProject(project.id) ? Provider.allCases : tools.providers
         let provider = available.contains(AgentDefaults.provider) ? AgentDefaults.provider : (available.first ?? .claude)
         try await createAgent(projectID: project.id, provider: provider,
                               model: provider == .claude ? AgentDefaults.model : "default",
                               planMode: AgentDefaults.planMode, role: AgentDefaults.role, task: Self.issuePrompt(issue, note: note),
-                              ownBranch: AgentDefaults.ownBranch && project.isGitRepo, issue: issue.ref(), open: false)
+                              ownBranch: AgentDefaults.ownBranch && isGitRepo(project.id), issue: issue.ref(), open: false)
         notice = "An agent started on #\(issue.number) in \(project.name)."
     }
 

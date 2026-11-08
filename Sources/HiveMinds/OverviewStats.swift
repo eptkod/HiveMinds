@@ -1,5 +1,7 @@
 import SwiftUI
 import Charts
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// The honey accent from the brand palette (#F5B53D). One lit thing per chart.
 private let honey = Color(red: 0.961, green: 0.710, blue: 0.239)

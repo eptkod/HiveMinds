@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 import WebKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// One browser tab's page. Its web view lives as long as the tab, so switching tabs doesn't reload it.
 @MainActor @Observable

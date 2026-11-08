@@ -1,4 +1,6 @@
 import Foundation
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// When agents used their tokens, for the Overview's charts. Built from the timestamps in Claude Code
 /// transcripts as they're read, so nothing extra is recorded while agents work.

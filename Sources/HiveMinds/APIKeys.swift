@@ -1,5 +1,7 @@
 import Foundation
 import Security
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// How an agent's tool signs in: through your plan's login (`claude` / `codex login`), or with an API key
 /// you pay for per token. API keys live in the macOS Keychain, never in a file.

@@ -1,0 +1,22 @@
+post_install() {
+  cat <<'HINT'
+
+HiveMinds Host is installed. To set it up:
+
+  hiveminds-host projects add ~/code/my-project    # the folders agents may work in
+  systemctl --user enable --now hiveminds-host     # run it in the background
+  sudo loginctl enable-linger $USER                # keep it running when logged out, start at boot
+  hiveminds-host pair                              # shows the code to type into HiveMinds on your Mac
+
+Or run `hiveminds-host serve` in a terminal instead of the service.
+
+Agents use this machine's Claude Code login, so run `claude` once and log in.
+So the Mac can find it: sudo systemctl enable --now avahi-daemon
+If a firewall is on: sudo ufw allow 7420/tcp && sudo ufw allow 5353/udp
+
+HINT
+}
+
+post_upgrade() {
+  echo "Restart HiveMinds Host to use the new version: systemctl --user restart hiveminds-host"
+}

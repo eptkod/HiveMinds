@@ -1,6 +1,8 @@
 #if DEBUG
 import AppKit
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Debug builds only: `HIVEMINDS_SNAPSHOT=/path/prefix` saves PNGs of the window in each section,
 /// so layouts can be checked without screen-recording permission.
@@ -36,6 +38,18 @@ enum DebugSnapshot {
         }
         if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_ISSUE"] {
             runTestIssue(store: store, path: path)
+            return
+        }
+        if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_PLAN"] {
+            runTestPlan(store: store, path: path)
+            return
+        }
+        if let path = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_STARTUP"] {
+            runTestStartup(store: store, path: path)
+            return
+        }
+        if let target = ProcessInfo.processInfo.environment["HIVEMINDS_TEST_REMOTE"] {
+            DebugRemoteTest.run(store: store, target: target)
             return
         }
         if let path = ProcessInfo.processInfo.environment["HIVEMINDS_DEMO"] {
@@ -111,7 +125,7 @@ enum DebugSnapshot {
             // fill its page), the way a sideways swipe would, and close them again.
             steps.append(("canvas-pages", { for _ in 0..<10 { store.newShellTab(in: p.id) }; store.selection = .project(p.id) }))
             func turnPage() {
-                func find(_ v: NSView) -> PagerAnchor.View? { (v as? PagerAnchor.View) ?? v.subviews.lazy.compactMap(find).first }
+                @MainActor func find(_ v: NSView) -> PagerAnchor.View? { if let hit = v as? PagerAnchor.View { return hit }; for s in v.subviews { if let hit = find(s) { return hit } }; return nil }
                 let pager = NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first
                 print("SWIPE pages", pager?.pages ?? 0)
                 pager?.turn(1)
@@ -149,7 +163,7 @@ enum DebugSnapshot {
             steps.append(("drag-resized", { hold(nil) }))
             // A tile on the second page sized by its corner: it should move to the first page, where it stays.
             steps.append(("drag-page2", { store.showingNewAgent = false; store.mode = .agents; store.selection = .project(p.id)
-                func find(_ v: NSView) -> PagerAnchor.View? { (v as? PagerAnchor.View) ?? v.subviews.lazy.compactMap(find).first }
+                @MainActor func find(_ v: NSView) -> PagerAnchor.View? { if let hit = v as? PagerAnchor.View { return hit }; for s in v.subviews { if let hit = find(s) { return hit } }; return nil }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first?.turn(1) }
                 let last = store.canvasItems(in: p).count - 1
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { hold(.init(index: last, by: CGSize(width: -0.2, height: 0.2), edges: [.top, .leading])) }
@@ -164,7 +178,7 @@ enum DebugSnapshot {
             steps.append(("drag-edge-dropped", { hold(nil) }))
             // Let go at the right edge straight away: it should still go to the next page.
             steps.append(("drag-edge-quick", { if let pager = { () -> PagerAnchor.View? in
-                    func find(_ v: NSView) -> PagerAnchor.View? { (v as? PagerAnchor.View) ?? v.subviews.lazy.compactMap(find).first }
+                    @MainActor func find(_ v: NSView) -> PagerAnchor.View? { if let hit = v as? PagerAnchor.View { return hit }; for s in v.subviews { if let hit = find(s) { return hit } }; return nil }
                     return NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first }() { pager.turn(-5) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { hold(.init(index: 0, by: CGSize(width: 0.85, height: 0.1))) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { hold(nil) }
@@ -231,6 +245,91 @@ enum DebugSnapshot {
     /// `HIVEMINDS_DEMO=/path/to/repo` with `HIVEMINDS_SNAPSHOT=/path/prefix`: the README's screenshots. Starts four
     /// Haiku agents and a short meeting there, then captures the Canvas, an agent, the meeting, Overview and History.
     /// Use a scratch support dir and a scratch repo: the agents run unrestricted.
+    /// Answers Claude Code's "trust this folder?" prompt in a test run by looking at the screen: Return when
+    /// "Yes, I trust this folder" is the selected line, otherwise one press of Down. Blind "Down, then Return"
+    /// sometimes landed on "No, exit" and closed the agent.
+    static func answerTrust(_ id: UUID) async {
+        guard let screen = Terminals.shared.screenText(id), screen.contains("trust this folder") else { return }
+        let selected = screen.split(separator: "\n").first { $0.contains("❯") }
+        Terminals.shared.sendKeys(id, selected?.contains("Yes, I trust") == true ? "\r" : "\u{1b}[B")
+        try? await Task.sleep(for: .milliseconds(500))
+    }
+
+    /// `HIVEMINDS_TEST_PLAN=/path/to/scratch/repo`: starts a Haiku agent in plan mode, waits for its plan, approves it
+    /// the way a tile does (reading the choices off its terminal), and checks the work then happens and finishes.
+    /// `HIVEMINDS_TEST_PLAN_ACCESS=manual` tries an agent on Manual review (approves with "manually approve edits").
+    /// `HIVEMINDS_TEST_PLAN_FEEDBACK=1` first sends the plan back with a change (Keep Planning), then approves the new one.
+    /// `HIVEMINDS_TEST_PLAN_SCREEN=1` also prints the terminal when the plan is up.
+    private static func runTestPlan(store: AppStore, path: String) {
+        let env = ProcessInfo.processInfo.environment
+        let project = store.addProject(path: path, repo: nil)
+        func log(_ s: String) { print(s); fflush(stdout) }
+        let access = Access(rawValue: env["HIVEMINDS_TEST_PLAN_ACCESS"] ?? "") ?? .auto
+        Task {
+            do {
+                try await store.createAgent(projectID: project.id, provider: .claude, model: "haiku", access: access, planMode: true,
+                                            role: "", task: "Create a file named planned.txt containing the word done. Keep the plan to one step.",
+                                            ownBranch: false)
+            } catch { log("PLAN-FAIL \(error.localizedDescription)"); exit(1) }
+            guard let id = store.agents.last?.id else { exit(1) }
+            @MainActor func wait(_ what: String, _ ok: @MainActor () -> Bool) async -> Bool {
+                for _ in 0..<90 {
+                    if ok() { return true }
+                    if store.state(id).status == .starting {
+                        await answerTrust(id)
+                    }
+                    // On Manual review, writing the file asks first; say yes so the run can finish.
+                    if case .permission? = store.state(id).ask?.kind { store.allow(id) }
+                    try? await Task.sleep(for: .seconds(2))
+                }
+                log("PLAN-TIMEOUT waiting for \(what): \(store.state(id).status.rawValue) \(store.state(id).activity)"); return false
+            }
+            guard await wait("plan", { if case .plan? = store.state(id).ask?.kind { true } else { false } }) else { exit(2) }
+            try? await Task.sleep(for: .seconds(1.5))
+            log("PLAN-MENU \(Terminals.shared.menuOptions(id).map { "\($0.number). \($0.label)" })")
+            if env["HIVEMINDS_TEST_PLAN_SCREEN"] != nil { log("PLAN-SCREEN\n" + (Terminals.shared.screenText(id) ?? "")) }
+            var name = "planned.txt"
+            if env["HIVEMINDS_TEST_PLAN_FEEDBACK"] != nil {
+                // Sends the plan back with a change, then waits for the new plan.
+                name = "replanned.txt"
+                store.keepPlanning(id, "Name the file \(name) instead of planned.txt.")
+                log("PLAN-FEEDBACK \(store.state(id).activity)")
+                guard await wait("no plan", { store.state(id).ask == nil }),
+                      await wait("new plan", { if case .plan? = store.state(id).ask?.kind { true } else { false } }) else { exit(2) }
+                try? await Task.sleep(for: .seconds(1.5))
+                log("PLAN-MENU \(Terminals.shared.menuOptions(id).map { "\($0.number). \($0.label)" })")
+            }
+            store.approvePlan(id)
+            log("PLAN-APPROVED \(store.state(id).activity)")
+            let file = URL(fileURLWithPath: path).appendingPathComponent(name).path
+            guard await wait("file", { FileManager.default.fileExists(atPath: file) }) else { exit(2) }
+            guard await wait("done", { store.state(id).status == .done }) else { exit(2) }
+            log("PLAN-DONE \(store.state(id).activity) · mode: \(Terminals.shared.screenText(id)?.split(separator: "\n").last { $0.contains("mode") || $0.contains("accept") }.map(String.init) ?? "?")")
+            if env["HIVEMINDS_TEST_KEEP"] == nil, let a = store.agent(id) { await store.deleteAgent(a) }
+            exit(0)
+        }
+    }
+
+    /// `HIVEMINDS_TEST_STARTUP=<scratch folder>`: starts one Claude Code agent there without showing it, so its
+    /// terminal is never resized, waits for its first screen, and prints that screen as text. Checks Claude Code's
+    /// start-up draws cleanly (SwiftTerm used to misread its `ESC[?u` and garble it).
+    private static func runTestStartup(store: AppStore, path: String) {
+        let project = store.addProject(path: path, repo: nil)
+        Task {
+            do {
+                try await store.createAgent(projectID: project.id, provider: .claude, model: "haiku", role: "", task: "",
+                                            ownBranch: false, open: false)
+            } catch { print("STARTUP-FAIL", error.localizedDescription); exit(1) }
+            try? await Task.sleep(for: .seconds(Double(ProcessInfo.processInfo.environment["HIVEMINDS_TEST_STARTUP_WAIT"] ?? "") ?? 8))
+            guard let id = store.agents.last?.id, let screen = Terminals.shared.screenText(id) else { print("STARTUP-FAIL no terminal"); exit(1) }
+            print("STARTUP-SCREEN-BEGIN")
+            print(screen)
+            print("STARTUP-SCREEN-END")
+            Terminals.shared.stop(id)
+            exit(0)
+        }
+    }
+
     private static func runDemo(store: AppStore, path: String) {
         let env = ProcessInfo.processInfo.environment
         let prefix = env["HIVEMINDS_SNAPSHOT"] ?? "/tmp/hiveminds-demo"
@@ -269,9 +368,7 @@ enum DebugSnapshot {
             // the next try doesn't move the choice back before the first has landed.
             @MainActor func trust() async {
                 for id in agents.map(\.id) + seats where store.state(id).status == .starting {
-                    Terminals.shared.sendKeys(id, "\u{1b}[B")
-                    try? await Task.sleep(for: .milliseconds(700))
-                    Terminals.shared.sendKeys(id, "\r")
+                    await answerTrust(id)
                     try? await Task.sleep(for: .seconds(4))
                 }
             }
@@ -322,7 +419,7 @@ enum DebugSnapshot {
         }
     }
 
-    private static func ownWindowImage(_ window: NSWindow) -> CGImage? {
+    static func ownWindowImage(_ window: NSWindow) -> CGImage? {
         typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
         guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
         // .optionIncludingWindow (8); .boundsIgnoreFraming (1) | .bestResolution (8)
@@ -366,9 +463,7 @@ enum DebugSnapshot {
                     if ok() { return true }
                     // Answers "trust this folder?" for the scratch repo: down to "Yes", then Return.
                     if store.state(id).status == .starting {
-                        Terminals.shared.sendKeys(id, "\u{1b}[B")
-                        try? await Task.sleep(for: .milliseconds(300))
-                        Terminals.shared.sendKeys(id, "\r")
+                        await answerTrust(id)
                     }
                     try? await Task.sleep(for: .seconds(2))
                 }
@@ -446,9 +541,7 @@ enum DebugSnapshot {
             let file = URL(fileURLWithPath: a.cwd).appendingPathComponent("done.txt").path
             for _ in 0..<60 {
                 if store.state(a.id).status == .starting {
-                    Terminals.shared.sendKeys(a.id, "\u{1b}[B")
-                    try? await Task.sleep(for: .milliseconds(300))
-                    Terminals.shared.sendKeys(a.id, "\r")
+                    await answerTrust(a.id)
                 }
                 if FileManager.default.fileExists(atPath: file) && store.state(a.id).status == .done { break }
                 try? await Task.sleep(for: .seconds(2))
@@ -475,9 +568,7 @@ enum DebugSnapshot {
             @MainActor func waitFor(_ done: () -> Bool) async {
                 for _ in 0..<45 {
                     if store.state(a.id).status == .starting {
-                        Terminals.shared.sendKeys(a.id, "\u{1b}[B")
-                        try? await Task.sleep(for: .milliseconds(300))
-                        Terminals.shared.sendKeys(a.id, "\r")
+                        await answerTrust(a.id)
                     }
                     if done() { return }
                     try? await Task.sleep(for: .seconds(2))
@@ -521,9 +612,7 @@ enum DebugSnapshot {
                     for _ in 0..<6 {
                         try? await Task.sleep(for: .seconds(6))
                         for seat in store.meeting(id)?.seats ?? [] where store.state(seat.agentID).status == .starting {
-                            Terminals.shared.sendKeys(seat.agentID, "\u{1b}[B")
-                            try? await Task.sleep(for: .milliseconds(300))
-                            Terminals.shared.sendKeys(seat.agentID, "\r")
+                            await answerTrust(seat.agentID)
                         }
                     }
                 }

@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// A tile you've sized by hand: where it sits and how big it is, in cells of a 6 × 6 snap grid that
 /// covers the visible area. Fractions of the window rather than points, so it holds up when the window changes size.

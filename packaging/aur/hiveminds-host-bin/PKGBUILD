@@ -1,0 +1,27 @@
+# Maintainer: Ethan
+# scripts/build-host-x86_64.sh keeps pkgver, _tag and the checksum in step with the release tarball.
+pkgname=hiveminds-host-bin
+pkgver=0.5.0
+_tag=v1.8.0
+pkgrel=1
+pkgdesc="Runs HiveMinds projects and Claude Code agents on this machine, for the HiveMinds Mac app on your network (prebuilt)"
+arch=('x86_64')
+url="https://github.com/eptkod/HiveMinds"
+license=('MIT')
+depends=('avahi' 'gcc-libs' 'git' 'glibc')
+optdepends=('claude-code: runs the agents (or use Claude Code'"'"'s own installer)'
+            'github-cli: lets agents work with GitHub')
+provides=('hiveminds-host')
+conflicts=('hiveminds-host')
+options=('!strip' '!debug')
+install=hiveminds-host.install
+source=("$pkgname-$pkgver.tar.gz::$url/releases/download/$_tag/hiveminds-host-$pkgver-linux-x86_64.tar.gz")
+sha256sums=('b0f5e390bb90248177fbb436f9dcbc41df6d09b8e19a0d4dde8862409ccc8282')
+
+package() {
+  cd "hiveminds-host-$pkgver-linux-x86_64"
+  install -Dm755 hiveminds-host "$pkgdir/usr/bin/hiveminds-host"
+  install -Dm644 hiveminds-host.service "$pkgdir/usr/lib/systemd/user/hiveminds-host.service"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD-PARTY-NOTICES.txt "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES.txt"
+}

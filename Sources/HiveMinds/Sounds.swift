@@ -1,4 +1,6 @@
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// The kinds of moments that make a sound. Each has its own shape so you can tell them apart without looking.
 enum Cue: String, CaseIterable, Identifiable {
@@ -124,6 +126,17 @@ private enum Timbre {
         case .bell: [(2, 0.35), (3, 0.12), (4.2, 0.06)]
         case .soft: [(2, 0.15)]
         case .buzz: [(3, 0.3), (5, 0.15), (7, 0.07)]
+        }
+    }
+}
+
+extension Cue {
+    /// The sound for why a hook event says an agent needs you.
+    init(_ cue: HookCue) {
+        switch cue {
+        case .question: self = .question
+        case .permission: self = .permission
+        case .error: self = .error
         }
     }
 }

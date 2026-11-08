@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// How much of the Claude plan's 5-hour and weekly limits is used. Two sources:
 /// - While the meter is on screen, the app asks Anthropic every 30 seconds, the same request Claude Code's

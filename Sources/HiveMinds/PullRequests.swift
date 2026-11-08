@@ -1,20 +1,6 @@
 import Foundation
-
-/// The pull request for an agent's branch, once there is one.
-struct PullRequestRef: Codable, Hashable {
-    var number: Int
-    var url: String
-    /// OPEN, MERGED or CLOSED, as GitHub says it.
-    var state: String
-
-    var label: String {
-        switch state {
-        case "MERGED": "Merged"
-        case "CLOSED": "Closed"
-        default: "Open"
-        }
-    }
-}
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// What a pull request for an agent's branch would contain, gathered before anything is pushed.
 struct PRPlan {

@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// One thing the palette can do: go somewhere, or run an action.
 struct PaletteItem: Identifiable {
@@ -120,10 +122,10 @@ struct CommandPalette: View {
             out.append(PaletteItem(id: "a.waiting", title: "Go to Agent Who Needs You", subtitle: a.title, icon: "bell.badge") { store.jumpToWaiting() })
         }
         out.append(PaletteItem(id: "a.agent", title: "New Agent", subtitle: "⌘N", icon: "plus") { store.beginNewAgent(in: nil) })
-        if !store.shownProjects.isEmpty {
+        if !store.localShownProjects.isEmpty {
             out.append(PaletteItem(id: "a.meeting", title: "New Meeting", subtitle: "⇧⌘N", icon: "bubble.left.and.bubble.right") { store.beginNewMeeting() })
         }
-        if let current {
+        if let current, !store.isRemoteProject(current) {
             out.append(PaletteItem(id: "a.browser", title: "New Browser Tab", subtitle: "⌘T", icon: "globe") { store.newBrowserTab(in: current) })
             out.append(PaletteItem(id: "a.shell", title: "New Shell Tab", subtitle: "⇧⌘T", icon: "terminal") { store.newShellTab(in: current) })
         }

@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 @main
 struct HiveMindsApp: App {
@@ -9,7 +11,15 @@ struct HiveMindsApp: App {
     var body: some Scene {
         Window("HiveMinds", id: "main") {
             Group {
-                if LocationCheck.shared.isChecking { LocationCheckingView() } else { RootView() }
+                if LocationCheck.shared.isChecking {
+                    if LocationCheck.shared.isBlocked { LocationBlockedView() } else { LocationCheckingView() }
+                } else {
+                    // Kept alive but hidden while blocked, so it doesn't start over when the block is lifted.
+                    RootView()
+                        .opacity(LocationCheck.shared.isBlocked ? 0 : 1)
+                        .allowsHitTesting(!LocationCheck.shared.isBlocked)
+                        .overlay { if LocationCheck.shared.isBlocked { LocationBlockedView() } }
+                }
             }
             .environment(store)
             .frame(minWidth: 920, minHeight: 580)

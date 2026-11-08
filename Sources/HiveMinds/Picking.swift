@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 // Select mode: tick several agents on the Canvas, the Overview or in the sidebar, then delete them in one go.
 // Turn it on with the Select button (Canvas tab row, Overview), or ⌘-click an agent anywhere.

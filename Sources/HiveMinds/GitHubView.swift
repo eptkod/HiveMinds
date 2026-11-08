@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 struct GitHubView: View {
     @Environment(AppStore.self) private var store

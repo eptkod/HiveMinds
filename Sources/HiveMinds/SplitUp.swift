@@ -1,4 +1,6 @@
 import Foundation
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// One job for one agent, as the split's planner wrote it.
 struct SplitTask: Decodable {

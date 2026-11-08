@@ -1,0 +1,33 @@
+# Maintainer: Ethan
+# Builds from source. Most people want hiveminds-host-bin, which needs no Swift toolchain.
+pkgname=hiveminds-host
+pkgver=0.5.0
+_tag=v1.8.0
+pkgrel=1
+pkgdesc="Runs HiveMinds projects and Claude Code agents on this machine, for the HiveMinds Mac app on your network"
+arch=('x86_64' 'aarch64')
+url="https://github.com/eptkod/HiveMinds"
+license=('MIT')
+depends=('avahi' 'gcc-libs' 'git' 'glibc')
+makedepends=('swift-bin')
+optdepends=('claude-code: runs the agents (or use Claude Code'"'"'s own installer)'
+            'github-cli: lets agents work with GitHub')
+conflicts=('hiveminds-host-bin')
+options=('!strip' '!debug' '!lto')
+install=hiveminds-host.install
+source=("$pkgname-$_tag.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "HiveMinds-${_tag#v}"
+  swift build -c release --static-swift-stdlib --product hiveminds-host
+}
+
+package() {
+  cd "HiveMinds-${_tag#v}"
+  install -Dm755 .build/release/hiveminds-host "$pkgdir/usr/bin/hiveminds-host"
+  install -Dm644 packaging/hiveminds-host.service "$pkgdir/usr/lib/systemd/user/hiveminds-host.service"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -dm755 "$pkgdir/usr/share/licenses/$pkgname"
+  bash scripts/third-party-notices.sh > "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY-NOTICES.txt"
+}

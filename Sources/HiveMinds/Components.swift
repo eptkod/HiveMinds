@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// The OLED look: true black behind everything, with surfaces only just lifted off it.
 enum Theme {

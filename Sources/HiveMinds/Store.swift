@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 @MainActor @Observable
 final class AppStore {
@@ -52,6 +54,16 @@ final class AppStore {
     var terminalGeneration: [UUID: Int] = [:]
     /// Agents you stopped. They stay stopped until you start them, rather than starting again when shown.
     var stopped: Set<UUID> = []
+    /// Hosts on the local network (HiveMinds Host): paired ones and ones discovery found.
+    let hosts = HostsModel()
+    /// Which host each remote project and agent is on (by host id). Remote ones sit in `projects` and `agents`
+    /// like local ones, so every screen shows them, but they're never saved here: the host has them.
+    var remoteProjectHost: [UUID: String] = [:]
+    var remoteAgentHost: [UUID: String] = [:]
+    /// Typing that a host turned down because someone else is typing there, to show Take Over.
+    var remoteRefused: [UUID: (by: DeviceInfo, at: Date)] = [:]
+    /// A host waiting for you to confirm Forget.
+    var pendingForgetHost: RemoteHost?
     let github = GitHubModel()
     let usage: UsageModel
     /// Tokens and estimated API cost per agent.
@@ -101,11 +113,14 @@ final class AppStore {
         }
         spend.onCostChange = { [weak self] id, old, new in self?.checkCost(id, old, new) }
         Terminals.shared.store = self
+        RemoteTerminals.shared.store = self
+        LocationCheck.shared.store = self
     }
 
     func bootstrap() async {
         tools = await Task.detached { Tools.detect() }.value
         toolsChecked = true
+        hosts.start(store: self)
         github.gh = tools.gh
         await github.refresh()
     }
@@ -156,60 +171,24 @@ final class AppStore {
     func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(Saved(projects: projects, agents: agents, browserTabs: browserTabs, shellTabs: shellTabs, canvasOrder: canvasOrder, canvasPins: canvasPins, canvasGroups: canvasGroups, meetings: meetings)) {
+        // Remote projects and agents belong to their hosts.
+        let localProjects = projects.filter { remoteProjectHost[$0.id] == nil }
+        let localAgents = agents.filter { remoteAgentHost[$0.id] == nil }
+        if let data = try? enc.encode(Saved(projects: localProjects, agents: localAgents, browserTabs: browserTabs, shellTabs: shellTabs, canvasOrder: canvasOrder, canvasPins: canvasPins, canvasGroups: canvasGroups, meetings: meetings)) {
             try? data.write(to: stateFile, options: .atomic)
         }
     }
 
-    /// Claude Code hooks that append each event, one JSON object per line, to the file the agent was
-    /// started with. The app watches those files: no server, nothing listening on a port.
+    /// The Claude Code settings files agents start with (hooks and status line); see `HookSettings`.
     private func writeHooksFile() {
-        let command = #"[ -n "$HIVEMINDS_EVENTS" ] && { tr -d '\n' >> "$HIVEMINDS_EVENTS"; echo >> "$HIVEMINDS_EVENTS"; }; true"#
-        let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Notification", "PermissionRequest", "StopFailure", "SessionEnd"]
-        var hooks: [String: Any] = [:]
-        for e in events { hooks[e] = [["hooks": [["type": "command", "command": command]]]] }
-        writeStatusLineScript()
-        // Agents never credit Claude in commits or PRs: no Co-Authored-By trailer, no "Generated with" footer.
-        let noCredit: [String: Any] = ["attribution": ["commit": "", "pr": ""], "includeCoAuthoredBy": false]
-        let settings: [String: Any] = [
-            "hooks": hooks,
-            "statusLine": ["type": "command", "command": "/bin/sh '\(statusLineScript.path)'"],
-        ].merging(noCredit) { $1 }
-        // Claude Code asks this command for the key. It prints our variable, so the key itself never touches disk.
-        let keyHelper = ["apiKeyHelper": "printenv \(SignIn.envName(for: .claude))"].merging(noCredit) { $1 }
-        for (file, contents) in [(hooksFile, settings), (hooksWithKeyFile, settings.merging(keyHelper) { $1 }),
-                                 (keyOnlyFile, keyHelper)] {
-            if let data = try? JSONSerialization.data(withJSONObject: contents, options: [.prettyPrinted, .sortedKeys]) {
-                try? data.write(to: file, options: .atomic)
-            }
-        }
+        HookSettings.write(.init(hooks: hooksFile, hooksWithKey: hooksWithKeyFile, keyOnly: keyOnlyFile,
+                                 statusLineScript: statusLineScript, usage: usage.file),
+                           keyVariable: SignIn.envName(for: .claude))
     }
 
     /// Settings for a one-off Claude call, so it uses the API key when Claude signs in with one.
     var claudeKeyArgs: [String] {
         SignIn.apiKey(for: .claude) != nil ? ["--settings", keyOnlyFile.path] : []
-    }
-
-    /// Claude Code hands its status line command the session's state, including how much of the plan's
-    /// 5-hour and weekly limits is used. The script saves that for the usage meter, then runs your own
-    /// status line from ~/.claude/settings.json, if you have one, so agents look as they would elsewhere.
-    private func writeStatusLineScript() {
-        let usageFile = usage.file.path
-        var script = """
-        #!/bin/sh
-        # Written by HiveMinds on every launch.
-        input=$(cat)
-        case "$input" in *'"rate_limits"'*) printf '%s' "$input" > '\(usageFile)' ;; esac
-        [ -n "$HIVEMINDS_STATUS" ] && printf '%s' "$input" > "$HIVEMINDS_STATUS"
-
-        """
-        let userSettings = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")
-        if let data = try? Data(contentsOf: userSettings),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let line = json["statusLine"] as? [String: Any], let own = line["command"] as? String, !own.isEmpty {
-            script += "printf '%s' \"$input\" | \(own)\n"
-        }
-        try? script.write(to: statusLineScript, atomically: true, encoding: .utf8)
     }
 
     func eventsFile(for id: UUID) -> URL { eventsDir.appendingPathComponent("\(id.uuidString).jsonl") }
@@ -402,7 +381,8 @@ final class AppStore {
     /// Moves a project into another's place in the sidebar, so dragging up lands it above that project
     /// and dragging down lands it below.
     func moveProject(_ id: UUID, to targetID: UUID) {
-        guard id != targetID,
+        // Projects stay with their machine: This Mac's among themselves, each host's among its own.
+        guard id != targetID, remoteProjectHost[id] == remoteProjectHost[targetID],
               let from = projects.firstIndex(where: { $0.id == id }),
               let to = projects.firstIndex(where: { $0.id == targetID }) else { return }
         projects.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
@@ -438,13 +418,18 @@ final class AppStore {
                      access: Access = AgentDefaults.access, planMode: Bool = false, role: String, task: String, attachments: [Attachment] = [], ownBranch: Bool,
                      issue: IssueRef? = nil, title: String? = nil, open: Bool = true) async throws {
         guard let project = project(projectID) else { throw NewAgentError("Pick a project first.") }
-        let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let host = remoteHost(ofProject: projectID) {
+            return try await createRemoteAgent(on: host, projectID: projectID, provider: provider, model: model, effort: effort,
+                                               access: access, planMode: planMode, role: role, task: task, ownBranch: ownBranch, open: open)
+        }
+        // The branch name, title and plan-mode rules are HiveMindsCore's (`AgentFactory`), shared with HiveMinds Host.
+        let request = NewAgent(provider: provider, model: model, effort: effort, access: access, planMode: planMode, role: role,
+                               task: task, ownBranch: ownBranch, issue: issue, title: title)
+        let t = request.trimmedTask
         var cwd = project.path
         var branch: String?
         if ownBranch {
-            let suffix = String(UUID().uuidString.prefix(4)).lowercased()
-            let name = issue.map { "issue-\($0.number)-\($0.title)" } ?? title ?? (t.isEmpty ? "agent" : Agent.roughTitle(t))
-            (cwd, branch) = try await makeWorktree(project: project, slug: "\(slugify(name))-\(suffix)")
+            (cwd, branch) = try await makeWorktree(project: project, slug: AgentFactory.branchSlug(request))
         }
         // Attachments are copied into the agent's own folder, where it can read them without asking,
         // and kept out of git like the rest of `.hiveminds`.
@@ -455,64 +440,34 @@ final class AppStore {
             do { paths = try Attachment.save(attachments, to: folder) }
             catch { throw NewAgentError("Couldn't copy the attachments. \(error.localizedDescription)") }
         }
-        let prompt = Attachment.prompt(t, paths: paths)
-        var agent = Agent(projectID: projectID, provider: provider, model: model, effort: effort, access: access,
-                          role: role.trimmingCharacters(in: .whitespacesAndNewlines),
-                          cwd: cwd, branch: branch, pendingTask: prompt.isEmpty ? nil : prompt)
-        agent.issue = issue
-        if planMode && provider == .claude { agent.startsInPlan = true }
-        // An issue already has a title someone wrote, and a split's planner names each task, so neither needs one from Haiku.
-        if let issue { agent.title = Agent.roughTitle(issue.title) } else if let title { agent.title = Agent.roughTitle(title) }
-        else if !t.isEmpty { agent.title = Agent.roughTitle(t) }
+        let agent = AgentFactory.make(request, projectID: projectID, cwd: cwd, branch: branch,
+                                      prompt: Attachment.prompt(t, paths: paths))
         agents.append(agent)
         live[agent.id] = LiveState(status: .starting, activity: "Starting up")
         save()
         // Not opened: start it in the background, the way meeting seats run.
         if open { select(agent.id) } else { _ = Terminals.shared.view(for: agent) }
-        if issue == nil && title == nil && !t.isEmpty { nameChat(agent.id, from: t) }
+        if AgentFactory.wantsGeneratedTitle(request) { nameChat(agent.id, from: t) }
     }
 
     /// Asks Haiku for a short title for the chat, in the background. The rough title stays if that fails.
     private func nameChat(_ id: UUID, from prompt: String) {
         guard AgentDefaults.autoTitles, let claude = tools.claude else { return }
-        let ask = "Write a short title (3 to 6 words, no quotes, no trailing period) for a coding chat that starts "
-            + "with this request. Reply with only the title.\n\nRequest: \(prompt.prefix(2000))"
         Task {
-            // The prompt goes before the flags: --tools takes every word after it.
-            let r = await Shell.run(claude, ["-p", ask, "--model", "haiku", "--no-session-persistence"] + claudeKeyArgs + ["--tools", ""],
-                                    cwd: supportDir.path, env: SignIn.environment(for: .claude))
-            let title = r.out.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"'.")))
-            guard r.ok, !title.isEmpty, title.count <= 80, !title.contains("\n") else { return }
+            guard let title = await ChatTitle.ask(claude: claude, prompt: prompt, extraArgs: claudeKeyArgs, cwd: supportDir.path,
+                                                  env: SignIn.environment(for: .claude)) else { return }
             update(id) { $0.title = title }
         }
     }
 
     /// A new git worktree on its own branch, `hive/<slug>`, inside the project.
     func makeWorktree(project: Project, slug: String) async throws -> (String, String) {
-        guard let git = tools.git else { throw NewAgentError("git isn't installed, so the agent can't get its own branch.") }
-        guard project.isGitRepo else { throw NewAgentError("\(project.name) isn't a git repository, so the agent can't get its own branch. Turn off \"Own branch\".") }
-        let branch = "hive/\(slug)"
-        // Inside the project, like Agent Office: trusting the project in Claude Code then covers every
-        // agent's folder, so new agents don't stop at Claude Code's "trust this folder?" question.
-        let path = "\(project.path)/.hiveminds/worktrees/\(slug)"
-        excludeFromGit(project: project, pattern: "/.hiveminds/")
-        let r = await Shell.run(git, ["-C", project.path, "worktree", "add", "-b", branch, path])
-        guard r.ok else {
-            let hint = r.message.contains("invalid reference") || r.message.contains("not a valid object")
-                ? " The repository has no commits yet. Make a first commit, or turn off \"Own branch\"." : ""
-            throw NewAgentError("Couldn't make a branch for the agent. \(r.message)\(hint)")
-        }
-        return (path, branch)
+        try await Git.makeWorktree(git: tools.git, project: project, slug: slug)
     }
 
     /// Keeps the agents' folders out of `git status` without changing any file in the repository.
     func excludeFromGit(project: Project, pattern: String) {
-        let file = "\(project.path)/.git/info/exclude"
-        let current = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
-        guard !current.split(separator: "\n").contains(Substring(pattern)) else { return }
-        try? FileManager.default.createDirectory(atPath: "\(project.path)/.git/info", withIntermediateDirectories: true)
-        let line = (current.isEmpty || current.hasSuffix("\n") ? "" : "\n") + pattern + "\n"
-        try? (current + line).write(toFile: file, atomically: true, encoding: .utf8)
+        Git.excludeFromGit(projectPath: project.path, pattern: pattern)
     }
 
     func update(_ id: UUID, _ change: (inout Agent) -> Void) {
@@ -523,12 +478,14 @@ final class AppStore {
 
     /// Starts an agent that isn't running. Its terminal starts the CLI once it's on screen.
     func start(_ id: UUID) {
+        if let host = remoteHost(of: id) { return remote(host, .startAgent(AgentRef(id)), "start") }
         stopped.remove(id)
         live[id] = LiveState(status: .starting, activity: "Starting up")
         terminalGeneration[id, default: 0] += 1
     }
 
     func restart(_ id: UUID) {
+        if let host = remoteHost(of: id) { return remote(host, .restartAgent(AgentRef(id)), "restart") }
         stopped.remove(id)
         Terminals.shared.stop(id)
         live[id] = LiveState(status: .starting, activity: "Starting up")
@@ -536,36 +493,58 @@ final class AppStore {
     }
 
     func stop(_ id: UUID) {
+        if let host = remoteHost(of: id) { return remote(host, .stopAgent(AgentRef(id)), "stop") }
         Terminals.shared.stop(id)
         stopped.insert(id)
         setStatus(id, .asleep, "Stopped")
         terminalGeneration[id, default: 0] += 1
     }
 
+    /// Stops every agent and meeting that's at work, for when the region check finds a provider isn't offered.
+    /// Like Stop, nothing is lost: each agent picks up its conversation when it's started again.
+    func stopEverything(_ why: String) {
+        for m in meetings where m.status == .running { pauseMeeting(m.id) }
+        for a in agents where remoteAgentHost[a.id] == nil && (Terminals.shared.isRunning(a.id) || state(a.id).status == .starting) {
+            pendingInput[a.id] = nil
+            stop(a.id)
+            setStatus(a.id, .asleep, why)
+        }
+    }
+
     /// Removes the agent. Its worktree goes too, but only if it has no uncommitted changes; its branch,
     /// and so any commits on it, always stays.
     func deleteAgent(_ agent: Agent) async {
+        let place = folderPlace(agent)
         if await !removeAgent(agent) {
-            notice = "The folder for \"\(agent.title)\" was kept because it has changes that aren't committed: \(agent.cwd)"
+            notice = "The folder for \"\(agent.title)\" was kept because it has changes that aren't committed\(place)"
         }
+    }
+
+    /// Where an agent's folder is, to end a message with: its path here, or the host it's on.
+    private func folderPlace(_ agent: Agent) -> String {
+        remoteHost(of: agent.id).map { ", on \($0.name)." } ?? ": \(agent.cwd)"
     }
 
     /// Deletes several agents, the same way as one at a time, and says once what happened.
     func deleteAgents(_ list: [Agent]) async {
-        var kept: [Agent] = []
-        for agent in list where await !removeAgent(agent) { kept.append(agent) }
+        var kept: [(agent: Agent, place: String)] = []
+        for agent in list {
+            let place = folderPlace(agent)
+            if await !removeAgent(agent) { kept.append((agent, place)) }
+        }
         picked.subtract(list.map(\.id))
         picking = false
         let deleted = "Deleted \(list.count) agent\(list.count == 1 ? "" : "s")."
         notice = switch kept.count {
         case 0: deleted
-        case 1: "\(deleted) The folder for \"\(kept[0].title)\" was kept because it has changes that aren't committed: \(kept[0].cwd)"
+        case 1: "\(deleted) The folder for \"\(kept[0].agent.title)\" was kept because it has changes that aren't committed\(kept[0].place)"
         default: "\(deleted) \(kept.count) of their folders were kept because they have changes that aren't committed."
         }
     }
 
     /// Returns false when the agent's worktree was kept because it has uncommitted changes.
     private func removeAgent(_ agent: Agent) async -> Bool {
+        if let host = remoteHost(of: agent.id) { return await removeRemoteAgent(agent, on: host) }
         Terminals.shared.stop(agent.id)
         var removedFolder = true
         if agent.branch != nil, let git = tools.git, let project = project(agent.projectID) {
@@ -639,6 +618,7 @@ final class AppStore {
     func browserTabs(in project: Project) -> [BrowserTab] { browserTabs.filter { $0.projectID == project.id } }
 
     func newBrowserTab(in projectID: UUID, url: String = "") {
+        if let host = remoteHost(ofProject: projectID) { return notice = "Browser tabs are for projects on this Mac; this one is on \(host.name)." }
         let tab = BrowserTab(projectID: projectID, url: url)
         browserTabs.append(tab)
         save()
@@ -660,6 +640,8 @@ final class AppStore {
     func shellTabs(in project: Project) -> [ShellTab] { shellTabs.filter { $0.projectID == project.id } }
 
     func newShellTab(in projectID: UUID) {
+        // A shell on the host isn't part of the protocol yet.
+        if let host = remoteHost(ofProject: projectID) { return notice = "Shell tabs are for projects on this Mac; this one is on \(host.name). Use ssh for a shell there." }
         let tab = ShellTab(projectID: projectID)
         shellTabs.append(tab)
         save()
@@ -719,10 +701,7 @@ final class AppStore {
     func setStatus(_ id: UUID, _ status: AgentStatus, _ activity: String? = nil, cue: Cue = .question) {
         let old = state(id).status
         var s = state(id)
-        s.status = status
-        if status != .needsYou { s.ask = nil }
-        if let activity { s.activity = activity }
-        s.updated = Date()
+        s.set(status, activity)
         live[id] = s
         if status == .needsYou && old != .needsYou {
             Sounds.play(cue)
@@ -740,182 +719,75 @@ final class AppStore {
         warning = "\"\(agent.title)\" has used about \(TokenBadge.money(new)) at API prices (an estimate), past your \(TokenBadge.money(limit)) warning."
     }
 
-    private func updateBadge() {
+    func updateBadge() {
         let n = waitingAgents.count
         NSApp.dockTile.badgeLabel = n > 0 ? "\(n)" : nil
     }
 
-    /// One Claude Code hook event, as the hook wrote it.
+    /// One Claude Code hook event, as the hook wrote it. What it means is worked out in HiveMindsCore
+    /// (`HookInterpreter`, shared with HiveMinds Host); this carries it out.
     func apply(event: [String: Any], to id: UUID) {
-        guard agent(id) != nil, let name = event["hook_event_name"] as? String else { return }
-        switch name {
-        case "SessionStart":
-            if state(id).status == .starting || state(id).status == .asleep { setStatus(id, .idle, "Ready for a task") }
-            if let text = pendingInput.removeValue(forKey: id) {
-                // Give Claude Code a moment to draw its prompt before typing into it.
-                Task {
-                    try? await Task.sleep(for: .seconds(1.5))
-                    Terminals.shared.type(id, text)
+        guard let agent = agent(id) else { return }
+        let s = state(id)
+        let now = HookAgentState(status: s.status, activity: s.activity, ask: s.ask?.kind,
+                                 hasStarted: agent.hasStarted, isUntitled: agent.isUntitled)
+        for effect in HookInterpreter.effects(of: event, state: now) {
+            switch effect {
+            case .status(let status, let activity, let cue):
+                setStatus(id, status, activity, cue: Cue(cue))
+            case .ask(let kind):
+                live[id, default: LiveState()].ask = PendingAsk(kind: kind)
+            case .typePendingInput:
+                if let text = pendingInput.removeValue(forKey: id) {
+                    // Give Claude Code a moment to draw its prompt before typing into it.
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        Terminals.shared.type(id, text)
+                    }
                 }
-            }
-        case "UserPromptSubmit":
-            if agent(id)?.hasStarted == false { update(id) { $0.hasStarted = true; $0.pendingTask = nil } }
-            let prompt = (event["prompt"] as? String ?? "").replacingOccurrences(of: "\n", with: " ")
-            if agent(id)?.isUntitled == true, !prompt.trimmingCharacters(in: .whitespaces).isEmpty, !prompt.hasPrefix("/") {
+            case .markStarted:
+                update(id) { $0.hasStarted = true; $0.pendingTask = nil }
+            case .retitle(let prompt):
                 update(id) { $0.title = Agent.roughTitle(prompt) }
                 nameChat(id, from: prompt)
+            case .turnEnded:
+                meetingTurnEnded(id)
+                // Notices a pull request the agent opened itself.
+                if self.agent(id)?.branch != nil { Task { await refreshPullRequest(id) } }
             }
-            setStatus(id, .working, prompt.isEmpty ? "Thinking" : "Asked: \(prompt.prefix(120))")
-        case "PreToolUse":
-            if event["tool_name"] as? String == "AskUserQuestion" {
-                setStatus(id, .needsYou, "Has a question for you", cue: .question)
-                setAsk(id, .questions(AskQuestion.parse(event["tool_input"] as? [String: Any] ?? [:])))
-            } else if event["tool_name"] as? String == "ExitPlanMode" {
-                askToApprovePlan(id, event["tool_input"] as? [String: Any] ?? [:])
-            } else {
-                setStatus(id, .working, describeTool(event))
-            }
-        case "PermissionRequest":
-            let tool = event["tool_name"] as? String ?? "a tool"
-            let input = event["tool_input"] as? [String: Any] ?? [:]
-            if tool == "AskUserQuestion" {
-                setStatus(id, .needsYou, "Has a question for you", cue: .question)
-                setAsk(id, .questions(AskQuestion.parse(input)))
-            } else if tool == "ExitPlanMode" {
-                askToApprovePlan(id, input)
-            } else {
-                setStatus(id, .needsYou, "Wants permission to use \(tool)", cue: .permission)
-                setAsk(id, .permission(tool: tool, detail: permissionDetail(tool, input)))
-            }
-        case "Notification":
-            let type = event["notification_type"] as? String ?? ""
-            let message = event["message"] as? String ?? "Waiting for you"
-            if type == "idle_prompt" {
-                if state(id).status == .working { setStatus(id, .needsYou, message) }
-            } else if state(id).ask == nil {
-                // When it's already waiting on something it can be answered from a tile, that line says more.
-                setStatus(id, .needsYou, message, cue: type == "permission_prompt" ? .permission : .question)
-            }
-        case "StopFailure":
-            // The turn ended on an error (an API error, a rate limit, a lost connection) rather than finishing.
-            let error = (event["error"] as? String).map { $0.replacingOccurrences(of: "_", with: " ") } ?? "an error"
-            setStatus(id, .needsYou, "Stopped on \(error)", cue: .error)
-        case "Stop":
-            setStatus(id, .done, state(id).activity.hasPrefix("Asked:") ? "Finished" : "Finished · \(state(id).activity)")
-            meetingTurnEnded(id)
-            // Notices a pull request the agent opened itself.
-            if agent(id)?.branch != nil { Task { await refreshPullRequest(id) } }
-        case "SessionEnd":
-            setStatus(id, .asleep, "Session ended")
-        default:
-            break
-        }
-    }
-
-    private func askToApprovePlan(_ id: UUID, _ input: [String: Any]) {
-        if case .plan? = state(id).ask?.kind { return }
-        setStatus(id, .needsYou, "Wants you to approve its plan", cue: .question)
-        setAsk(id, .plan((input["plan"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)))
-    }
-
-    private func setAsk(_ id: UUID, _ kind: PendingAsk.Kind) {
-        if case .questions(let q) = kind, q.isEmpty { return }
-        live[id, default: LiveState()].ask = PendingAsk(kind: kind)
-    }
-
-    /// What a permission prompt is about, as you'd want to check it: the command itself, or the file.
-    private func permissionDetail(_ tool: String, _ input: [String: Any]) -> String {
-        switch tool {
-        case "Bash": (input["command"] as? String) ?? describeToolUse(tool, input)
-        case "Edit", "MultiEdit", "Write", "Read", "NotebookEdit":
-            (input["file_path"] as? String ?? input["notebook_path"] as? String) ?? describeToolUse(tool, input)
-        case "WebFetch": (input["url"] as? String) ?? describeToolUse(tool, input)
-        default: describeToolUse(tool, input)
         }
     }
 
     // MARK: Answering from a tile
     // These press the same keys you would in the agent's terminal, so the terminal stays the one source of truth.
+    // Which keys, and the status afterwards, come from HiveMindsCore (`PromptResponder`), shared with HiveMinds Host.
 
     /// Says yes once to a permission prompt (its first option).
-    func allow(_ id: UUID) {
-        guard state(id).ask != nil else { return }
-        Terminals.shared.press(id, ["1"])
-        setStatus(id, .working, "Allowed")
-    }
+    func allow(_ id: UUID) { respond(id, .allow) }
 
     /// Says no to a permission prompt or skips a question. Claude Code then waits for you to say what to do instead.
-    func decline(_ id: UUID) {
-        guard state(id).ask != nil else { return }
-        Terminals.shared.press(id, ["\u{1b}"])
-        setStatus(id, .idle, "You said no. Tell it what to do instead.")
-    }
+    func decline(_ id: UUID) { respond(id, .decline) }
 
-    /// Approves a plan and lets it start, keeping the conversation. Claude Code's list of choices changes with
-    /// the session (some start with "clear context", some offer bypass or auto mode), so the number to press is
-    /// read off the terminal: "manually approve edits" for an agent on Manual review, otherwise the first "Yes"
-    /// that keeps the context.
-    func approvePlan(_ id: UUID) {
-        guard case .plan? = state(id).ask?.kind else { return }
-        let options = Terminals.shared.menuOptions(id)
-        let keep = options.filter { $0.label.hasPrefix("Yes") && !$0.label.localizedCaseInsensitiveContains("clear context") }
-        let manual = agent(id)?.access == .manual ? keep.first { $0.label.localizedCaseInsensitiveContains("manually") } : nil
-        guard let pick = manual ?? keep.first else {
-            warning = "Couldn't find the plan's choices in \"\(agent(id)?.title ?? "the agent")\"'s terminal. Open it to approve the plan there."
-            return
-        }
-        Terminals.shared.press(id, ["\(pick.number)"])
-        setStatus(id, .working, "Plan approved")
-    }
+    /// Approves a plan and lets it start, keeping the conversation.
+    func approvePlan(_ id: UUID) { respond(id, .approvePlan) }
 
     /// Sends a plan back with what to change, so it keeps planning. With nothing to say, it just stops and waits.
-    func keepPlanning(_ id: UUID, _ feedback: String) {
-        guard case .plan? = state(id).ask?.kind else { return }
-        let text = feedback.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
-        guard !text.isEmpty, let no = Terminals.shared.menuOptions(id).last(where: { $0.label.hasPrefix("No, keep planning") }) else {
-            return decline(id)
-        }
-        Terminals.shared.press(id, ["\(no.number)", text, "\r"])
-        setStatus(id, .working, "Reworking the plan")
-    }
+    func keepPlanning(_ id: UUID, _ feedback: String) { respond(id, .keepPlanning(feedback)) }
 
     /// Answers every question in an AskUserQuestion prompt: an option's index, or your own words.
-    func answer(_ id: UUID, _ answers: [QuestionAnswer]) {
-        guard case .questions(let questions)? = state(id).ask?.kind, answers.count == questions.count else { return }
-        var keys: [String] = []
-        for (q, a) in zip(questions, answers) {
-            switch a {
-            case .option(let i): keys.append("\(i + 1)")
-            case .text(let text):
-                // The option after the listed ones is "Type something".
-                keys.append("\(q.options.count + 1)")
-                keys.append(text.replacingOccurrences(of: "\n", with: " "))
-                keys.append("\r")
-            }
+    func answer(_ id: UUID, _ answers: [QuestionAnswer]) { respond(id, .answer(answers)) }
+
+    private func respond(_ id: UUID, _ action: PromptAction) {
+        if let host = remoteHost(of: id) { return respondRemotely(id, action, on: host) }
+        switch PromptResponder.respond(action, ask: state(id).ask?.kind, access: agent(id)?.access,
+                                       menu: { Terminals.shared.menuOptions(id) }) {
+        case .press(let keys, let status, let activity):
+            Terminals.shared.press(id, keys)
+            setStatus(id, status, activity)
+        case .planChoicesNotFound:
+            warning = "Couldn't find the plan's choices in \"\(agent(id)?.title ?? "the agent")\"'s terminal. Open it to approve the plan there."
+        case .nothing:
+            break
         }
-        // With more than one question, Claude Code shows your answers and asks you to submit them.
-        if questions.count > 1 { keys.append("1") }
-        Terminals.shared.press(id, keys)
-        setStatus(id, .working, "Answered")
-    }
-
-    private func describeTool(_ e: [String: Any]) -> String {
-        describeToolUse(e["tool_name"] as? String ?? "a tool", e["tool_input"] as? [String: Any] ?? [:])
-    }
-}
-
-/// What a tool call is doing, in plain words: "Editing App.swift", "Running the tests".
-nonisolated func describeToolUse(_ tool: String, _ input: [String: Any]) -> String {
-    func file(_ k: String) -> String { ((input[k] as? String) ?? "").split(separator: "/").last.map(String.init) ?? "" }
-    switch tool {
-    case "Bash": return "Running \((input["description"] as? String) ?? (input["command"] as? String ?? "a command"))"
-    case "Read": return "Reading \(file("file_path"))"
-    case "Edit", "MultiEdit": return "Editing \(file("file_path"))"
-    case "Write": return "Writing \(file("file_path"))"
-    case "Grep", "Glob": return "Searching the code"
-    case "WebFetch", "WebSearch": return "Looking something up online"
-    case "Task", "Agent": return "Handing part of the work to a helper"
-    case "TodoWrite": return "Planning the steps"
-    default: return "Using \(tool)"
     }
 }

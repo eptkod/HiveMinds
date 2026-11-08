@@ -1,5 +1,7 @@
 import Foundation
 import IOKit.pwr_mgt
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Keeps the display (and so the Mac) from going to sleep while any agent is working, when that's
 /// turned on in Settings > Agents. It holds a power assertion only while needed and drops it as soon

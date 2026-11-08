@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 struct OverviewView: View {
     @Environment(AppStore.self) private var store
@@ -63,6 +65,11 @@ struct AgentCard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(agent.title).font(.headline).lineLimit(1).help(agent.title)
                     HStack(spacing: 5) {
+                        if let host = store.remoteHost(of: agent.id) {
+                            Image(systemName: "server.rack").imageScale(.small)
+                            Text(host.name)
+                            Text("·")
+                        }
                         Text(store.project(agent.projectID)?.name ?? "")
                         if let b = agent.branch {
                             Image(systemName: "arrow.triangle.branch").imageScale(.small)

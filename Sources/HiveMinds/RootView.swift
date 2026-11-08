@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 struct RootView: View {
     @Environment(AppStore.self) private var store
@@ -77,6 +79,7 @@ struct RootView: View {
                  : "This restarts the agent. Codex starts a new conversation, so it won't remember this one.")
         }
         .sheet(isPresented: $store.showingNewAgent) { NewAgentSheet() }
+        .modifier(HostDialogs())
         .sheet(isPresented: $store.showingNewMeeting) { NewMeetingSheet() }
         .confirmationDialog("Delete \(store.pendingDelete.map { "\"\($0.title)\"" } ?? "agent")?",
                             isPresented: Binding(get: { store.pendingDelete != nil }, set: { if !$0 { store.pendingDelete = nil } }),

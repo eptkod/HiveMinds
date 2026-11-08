@@ -1,0 +1,230 @@
+diff --git a/a/Package.swift b/b/Package.swift
+index a33bbc6..4969f1c 100644
+--- a/a/Package.swift
++++ b/b/Package.swift
+@@ -1,5 +1,6 @@
+ // swift-tools-version:5.9
+-
++// SwiftTerm 1.11.2, vendored for HiveMinds with one added file (HiveMindsAccess.swift) and one visibility change
++// (Terminal.mouseProtocol is internal instead of private). See Vendor/README.md.
+ import PackageDescription
+ 
+ #if os(Linux) || os(Windows)
+@@ -8,108 +9,12 @@ let platformExcludes = ["Apple", "Mac", "iOS"]
+ let platformExcludes: [String] = []
+ #endif
+ 
+-#if os(Windows)
+-let products: [Product] = [
+-    .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+-    .library(
+-        name: "SwiftTerm",
+-        targets: ["SwiftTerm"]
+-    ),
+-]
+-
+-let targets: [Target] = [
+-    .target(
+-        name: "SwiftTerm",
+-        dependencies: [],
+-        path: "Sources/SwiftTerm",
+-        exclude: platformExcludes + ["Mac/README.md"]
+-//        swiftSettings: [
+-//            .unsafeFlags(["-enforce-exclusivity=none"])
+-//        ]
+-    ),
+-    .executableTarget (
+-        name: "SwiftTermFuzz",
+-        dependencies: ["SwiftTerm"],
+-        path: "Sources/SwiftTermFuzz"
+-    ),
+-    .testTarget(
+-        name: "SwiftTermTests",
+-        dependencies: ["SwiftTerm"],
+-        path: "Tests/SwiftTermTests"
+-    )
+-]
+-#else
+-let products: [Product] = [
+-    .executable(name: "SwiftTermFuzz", targets: ["SwiftTermFuzz"]),
+-    .executable(name: "termcast", targets: ["Termcast"]),
+-    .library(
+-        name: "SwiftTerm",
+-        targets: ["SwiftTerm"]
+-    ),
+-]
+-
+-let targets: [Target] = [
+-    .target(
+-        name: "SwiftTerm",
+-        //
+-        // We can not use Swift Subprocess, because there is no way of configuring the child process to
+-        // be a controlling terminal, as it is posix-spawn based.
+-//        dependencies: [
+-//            .product(name: "Subprocess", package: "swift-subprocess", condition: .when(platforms: [.macOS, .linux]))
+-//        ],
+-        path: "Sources/SwiftTerm",
+-        exclude: platformExcludes + ["Mac/README.md"]
+-//        swiftSettings: [
+-//            .unsafeFlags(["-enforce-exclusivity=none"])
+-//        ]
+-    ),
+-    .executableTarget (
+-        name: "SwiftTermFuzz",
+-        dependencies: ["SwiftTerm"],
+-        path: "Sources/SwiftTermFuzz"
+-    ),
+-    .executableTarget (
+-        name: "Termcast",
+-        dependencies: [
+-            "SwiftTerm",
+-            .product(name: "ArgumentParser", package: "swift-argument-parser")
+-        ],
+-        path: "Sources/Termcast"
+-    ),
+-    .testTarget(
+-        name: "SwiftTermTests",
+-        dependencies: ["SwiftTerm"],
+-        path: "Tests/SwiftTermTests"
+-    ),
+-    .executableTarget(
+-        name: "SwiftTermBenchmarks",
+-        dependencies: [
+-            "SwiftTerm",
+-            .product(name: "Benchmark", package: "package-benchmark")
+-        ],
+-        path: "Benchmarks/SwiftTermBenchmarks",
+-        plugins: [
+-            .plugin(name: "BenchmarkPlugin", package: "package-benchmark")
+-        ]
+-    )
+-]
+-#endif
+-
+ let package = Package(
+     name: "SwiftTerm",
+-    platforms: [
+-        .iOS(.v13),
+-        .macOS(.v13),
+-        .tvOS(.v13),
+-        .visionOS(.v1)
+-    ],
+-    products: products,
+-    dependencies: [
+-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
+-        .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
+-        .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.29.11")),
+-//        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
++    platforms: [.iOS(.v13), .macOS(.v13), .tvOS(.v13), .visionOS(.v1)],
++    products: [.library(name: "SwiftTerm", targets: ["SwiftTerm"])],
++    targets: [
++        .target(name: "SwiftTerm", path: "Sources/SwiftTerm", exclude: platformExcludes + ["Mac/README.md"]),
+     ],
+-    targets: targets,
+     swiftLanguageVersions: [.v5]
+ )
+diff --git a/a/Sources/SwiftTerm/EscapeSequenceParser.swift b/b/Sources/SwiftTerm/EscapeSequenceParser.swift
+index c305aaa..b910c74 100644
+--- a/a/Sources/SwiftTerm/EscapeSequenceParser.swift
++++ b/b/Sources/SwiftTerm/EscapeSequenceParser.swift
+@@ -409,13 +409,20 @@ public class EscapeSequenceParser {
+         case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
+         case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
+         case 0x73:                                              // s
++            // HiveMinds patch: `CSI ? Pm s` is XTSAVE (save private modes), not "save cursor".
++            if !collect.isEmpty { break }
+             if terminal.marginMode {
+                 terminal.cmdSetMargins(pars, collect)
+             } else {
+                 terminal.cmdSaveCursor(pars, collect)
+             }
+         case 0x74: terminal.csit(pars, collect)                 // t
+-        case 0x75: terminal.cmdRestoreCursor(pars, collect)     // u
++        case 0x75:                                              // u
++            // HiveMinds patch: only a plain `CSI u` restores the cursor. `CSI ? u`, `CSI > Pn u`, `CSI < u` and
++            // `CSI = Pn u` are the kitty keyboard protocol (Claude Code sends them at start-up); treating them
++            // as "restore cursor" made the cursor jump and garbled the screen. We don't speak that protocol, so
++            // they're ignored, which is what the protocol asks of terminals that don't.
++            if collect.isEmpty { terminal.cmdRestoreCursor(pars, collect) }
+         case 0x76: terminal.csiCopyRectangularArea(pars, collect) // v
+         case 0x78: terminal.csiX(pars, collect)                 // x (DECFRA)
+         case 0x79: terminal.cmdDECRQCRA(pars, collect)          // y
+diff --git a/b/Sources/SwiftTerm/HiveMindsAccess.swift b/b/Sources/SwiftTerm/HiveMindsAccess.swift
+new file mode 100644
+index 0000000..6de40b3
+--- /dev/null
++++ b/b/Sources/SwiftTerm/HiveMindsAccess.swift
+@@ -0,0 +1,60 @@
++// Added for HiveMinds: read-only access to terminal state that a screen snapshot needs.
++// Everything here reads existing state; nothing changes behaviour.
++import Foundation
++
++/// The terminal state a snapshot must restore, beyond the cells themselves.
++public struct HiveMindsModes: Equatable {
++    public var cursorHidden: Bool
++    public var applicationCursor: Bool
++    public var applicationKeypad: Bool
++    public var bracketedPaste: Bool
++    public var originMode: Bool
++    public var wraparound: Bool
++    public var reverseWraparound: Bool
++    public var insertMode: Bool
++    public var sendFocus: Bool
++    public var mouseMode: Terminal.MouseMode
++    /// 1006 for SGR, 1005 for UTF-8, 1015 for urxvt, 1016 for SGR pixels, nil for the default X10 encoding.
++    public var mouseEncodingMode: Int?
++    public var alternateScreen: Bool
++}
++
++extension Terminal {
++    public var hiveMindsModes: HiveMindsModes {
++        let encoding: Int?
++        switch mouseProtocol {
++        case .x10: encoding = nil
++        case .utf8: encoding = 1005
++        case .sgr: encoding = 1006
++        case .urxvt: encoding = 1015
++        case .sgrPixel: encoding = 1016
++        }
++        return HiveMindsModes(cursorHidden: cursorHidden, applicationCursor: applicationCursor,
++                              applicationKeypad: applicationKeypad, bracketedPaste: bracketedPasteMode,
++                              originMode: originMode, wraparound: wraparound, reverseWraparound: reverseWraparound,
++                              insertMode: insertMode, sendFocus: sendFocus, mouseMode: mouseMode,
++                              mouseEncodingMode: encoding, alternateScreen: isCurrentBufferAlternate)
++    }
++
++    /// The normal (not alternate) screen buffer, which holds the scrollback.
++    public var hiveMindsNormalBuffer: Buffer { normalBuffer }
++    /// The alternate screen buffer used by full-screen programs.
++    public var hiveMindsAltBuffer: Buffer { altBuffer }
++}
++
++extension Buffer {
++    /// How many lines the buffer holds: scrollback plus the screen.
++    public var hiveMindsLineCount: Int { lines.count }
++    /// How many of those lines are scrollback above the screen.
++    public var hiveMindsScrollbackCount: Int { yBase }
++    /// Whether the line at a buffer-relative row continues the line above it (it was wrapped, not ended).
++    public func hiveMindsIsWrapped(_ row: Int) -> Bool {
++        guard row >= 0 && row < lines.count else { return false }
++        return lines[row].isWrapped
++    }
++}
++
++extension CharData {
++    /// Whether the cell was never written (as opposed to holding a space).
++    public var hiveMindsIsEmpty: Bool { code == 0 }
++}
+diff --git a/a/Sources/SwiftTerm/Terminal.swift b/b/Sources/SwiftTerm/Terminal.swift
+index f0c176e..87152be 100644
+--- a/a/Sources/SwiftTerm/Terminal.swift
++++ b/b/Sources/SwiftTerm/Terminal.swift
+@@ -476,7 +476,7 @@ open class Terminal {
+     }
+     
+     // The protocol encoding for the terminal
+-    private var mouseProtocol: MouseProtocolEncoding = .x10
++    var mouseProtocol: MouseProtocolEncoding = .x10
+ 
+     // This is used to track if we are setting the colors, to prevent a
+     // recursive invocation (nativeForegroundColor sets the terminal

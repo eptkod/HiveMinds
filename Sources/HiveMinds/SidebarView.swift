@@ -1,5 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import HiveMindsCore
+import HiveMindsProtocol
 
 struct SidebarView: View {
     @Environment(AppStore.self) private var store
@@ -19,72 +21,21 @@ struct SidebarView: View {
             Label("History", systemImage: "clock.arrow.circlepath")
                 .tag(SidebarItem.history)
 
-            ForEach(store.shownProjects) { project in
+            // This Mac's projects, then each host's (once there are hosts).
+            let hasHosts = !store.hosts.hosts.isEmpty || !store.hosts.nearby.isEmpty
+            if hasHosts {
+                Section {} header: { MachineHeader() }
+            }
+            ForEach(store.localShownProjects) { project in projectSection(project) }
+            ForEach(store.hosts.hosts) { host in
+                Section { HostStatusRow(host: host) } header: { HostHeader(host: host) }
+                ForEach(store.shownProjects(on: host)) { project in projectSection(project) }
+            }
+            if !store.hosts.nearby.isEmpty {
                 Section {
-                    // A project's agents only show while its workspace is open, to keep the sidebar short.
-                    let open = store.currentProjectID == project.id
-                    CanvasRow(agents: store.agents(in: project), expanded: open)
-                        .tag(SidebarItem.project(project.id))
-                        .onDrop(of: [.text], delegate: ProjectDrop(target: project.id, dragging: $draggingProject, store: store))
-                    if open {
-                        let agents = store.agents(in: project)
-                        ForEach(Array(agents.enumerated()), id: \.element.id) { i, agent in
-                            AgentRow(agent: agent)
-                                .modifier(ChainDrop(shown: dropping != project.id || i < dropped))
-                                .tag(SidebarItem.agent(agent.id))
-                                .contextMenu { AgentMenu(agent: agent) }
-                        }
-                        Button { store.beginNewAgent(in: project.id) } label: {
-                            Label("New agent", systemImage: "plus")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .modifier(ChainDrop(shown: dropping != project.id || agents.count < dropped))
-                    }
+                    ForEach(store.hosts.nearby) { NearbyHostRow(nearby: $0) }
                 } header: {
-                    HStack {
-                        Text(project.name)
-                        Spacer()
-                        Menu {
-                            Button("New Agent Here") { store.beginNewAgent(in: project.id) }
-                            Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
-                            Button("New Shell Tab") { store.newShellTab(in: project.id) }
-                            Button("Show in Finder") { store.revealInFinder(project.path) }
-                            Divider()
-                            Button("Select Agents") {
-                                store.selection = .project(project.id)
-                                store.picking = true
-                            }
-                            .disabled(store.agents(in: project).isEmpty)
-                            Button("Delete Finished Agents…") { store.deleteFinished(in: project) }
-                                .disabled(!store.agents(in: project).contains(where: store.isFinished))
-                            if let repo = project.repo, let url = URL(string: "https://github.com/\(repo)") {
-                                Link("Open on GitHub", destination: url)
-                            }
-                            Divider()
-                            Button("Hide Project") { store.requestHide(project) }
-                            Button("Remove from HiveMinds", role: .destructive) { store.removeProject(project) }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        // Line the button up with the rows' trailing edge instead of the sidebar's edge.
-                        .padding(.trailing, 8)
-                        .help("Project options. Removing it from HiveMinds doesn't delete any files.")
-                    }
-                    .contentShape(Rectangle())
-                    .onDrag {
-                        draggingProject = project.id
-                        return NSItemProvider(object: project.id.uuidString as NSString)
-                    } preview: {
-                        Text(project.name)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Theme.surface, in: Capsule())
-                    }
-                    .onDrop(of: [.text], delegate: ProjectDrop(target: project.id, dragging: $draggingProject, store: store))
+                    Label("On this network", systemImage: "network").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -103,6 +54,81 @@ struct SidebarView: View {
                 }
                 bottomBar
             }
+        }
+    }
+
+    @ViewBuilder private func projectSection(_ project: Project) -> some View {
+        let remote = store.isRemoteProject(project.id)
+        Section {
+            // A project's agents only show while its workspace is open, to keep the sidebar short.
+            let open = store.currentProjectID == project.id
+            CanvasRow(agents: store.agents(in: project), expanded: open)
+                .tag(SidebarItem.project(project.id))
+                .onDrop(of: [.text], delegate: ProjectDrop(target: project.id, dragging: $draggingProject, store: store))
+            if open {
+                let agents = store.agents(in: project)
+                ForEach(Array(agents.enumerated()), id: \.element.id) { i, agent in
+                    AgentRow(agent: agent)
+                        .modifier(ChainDrop(shown: dropping != project.id || i < dropped))
+                        .tag(SidebarItem.agent(agent.id))
+                        .contextMenu { AgentMenu(agent: agent) }
+                }
+                Button { store.beginNewAgent(in: project.id) } label: {
+                    Label("New agent", systemImage: "plus")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .modifier(ChainDrop(shown: dropping != project.id || agents.count < dropped))
+            }
+        } header: {
+            HStack {
+                Text(project.name)
+                Spacer()
+                Menu {
+                    Button("New Agent Here") { store.beginNewAgent(in: project.id) }
+                    if !remote {
+                        Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
+                        Button("New Shell Tab") { store.newShellTab(in: project.id) }
+                        Button("Show in Finder") { store.revealInFinder(project.path) }
+                    }
+                    Divider()
+                    Button("Select Agents") {
+                        store.selection = .project(project.id)
+                        store.picking = true
+                    }
+                    .disabled(store.agents(in: project).isEmpty)
+                    Button("Delete Finished Agents…") { store.deleteFinished(in: project) }
+                        .disabled(!store.agents(in: project).contains(where: store.isFinished))
+                    if let repo = project.repo, let url = URL(string: "https://github.com/\(repo)") {
+                        Link("Open on GitHub", destination: url)
+                    }
+                    if !remote {
+                        Divider()
+                        Button("Hide Project") { store.requestHide(project) }
+                        Button("Remove from HiveMinds", role: .destructive) { store.removeProject(project) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                // Line the button up with the rows' trailing edge instead of the sidebar's edge.
+                .padding(.trailing, 8)
+                .help(remote ? "Project options. It's on a host; add or remove its projects there (hiveminds-host projects)."
+                             : "Project options. Removing it from HiveMinds doesn't delete any files.")
+            }
+            .contentShape(Rectangle())
+            .onDrag {
+                draggingProject = project.id
+                return NSItemProvider(object: project.id.uuidString as NSString)
+            } preview: {
+                Text(project.name)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Theme.surface, in: Capsule())
+            }
+            .onDrop(of: [.text], delegate: ProjectDrop(target: project.id, dragging: $draggingProject, store: store))
         }
     }
 

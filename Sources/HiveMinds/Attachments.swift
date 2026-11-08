@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// A file or screenshot handed to a new agent along with its first request.
 struct Attachment: Identifiable {

@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Everything you can do to an agent, in one menu. The sidebar row, its tab and its tile all show this same menu.
 struct AgentMenu: View {
@@ -15,9 +17,16 @@ struct AgentMenu: View {
             .disabled(!store.canRestartWith(agent))
         Button("Stop") { store.stop(agent.id) }
         Divider()
-        Button("Show in Finder") { store.revealInFinder(agent.cwd) }
-        OpenInMenu(path: agent.cwd)
-        Button("Copy Folder Path") { copyToClipboard(agent.cwd) }
+        if store.isRemote(agent.id) {
+            // Its folder is on the host.
+            if store.otherController(of: agent.id) != nil {
+                Button("Take Over") { store.takeControl(agent.id) }
+            }
+        } else {
+            Button("Show in Finder") { store.revealInFinder(agent.cwd) }
+            OpenInMenu(path: agent.cwd)
+            Button("Copy Folder Path") { copyToClipboard(agent.cwd) }
+        }
         if let branch = agent.branch {
             Button("Copy Branch Name") { copyToClipboard(branch) }
         }
@@ -89,14 +98,19 @@ struct PendingRestart: Identifiable {
 extension AppStore {
     /// Changes are read with git, so the agent has to work in a git project.
     func canShowChanges(_ agent: Agent) -> Bool {
-        tools.git != nil && (agent.branch != nil || project(agent.projectID)?.isGitRepo == true)
+        if let host = remoteHost(of: agent.id) {
+            return host.status.isConnected && (agent.branch != nil || host.projects.first { $0.id == agent.projectID }?.isGitRepo == true)
+        }
+        return tools.git != nil && (agent.branch != nil || project(agent.projectID)?.isGitRepo == true)
     }
 
     /// Only an agent that isn't busy or waiting on you can be restarted with new settings, so no turn is cut off.
     func canRestartWith(_ agent: Agent) -> Bool {
+        // A host starts its agents with the settings they were made with.
+        if remoteAgentHost[agent.id] != nil { return false }
         switch state(agent.id).status {
-        case .idle, .done, .asleep: true
-        case .working, .needsYou, .starting: false
+        case .idle, .done, .asleep: return true
+        case .working, .needsYou, .starting: return false
         }
     }
 

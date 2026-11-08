@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// An agent that was deleted, kept so the History page can still show it.
 struct PastAgent: Codable, Identifiable, Hashable {
@@ -112,6 +114,8 @@ struct HistoryView: View {
     @State private var confirmClear = false
     @AppStorage(SettingKey.historyDays) private var days = SettingDefault.historyDays
     @AppStorage(SettingKey.historyLimit) private var limit = SettingDefault.historyLimit
+    /// Agents deleted on each connected host, asked for when the page opens.
+    @State private var remotePast: [String: [AgentInfo]] = [:]
 
     private func matches(_ a: Agent, _ project: String) -> Bool {
         search.isEmpty || a.title.localizedCaseInsensitiveContains(search) || project.localizedCaseInsensitiveContains(search)
@@ -150,6 +154,19 @@ struct HistoryView: View {
                             .contextMenu { PastAgentMenu(past: p) }
                     }
                 }
+                ForEach(store.hosts.hosts.filter { $0.status.isConnected }) { host in
+                    let past = (remotePast[host.id] ?? []).filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }
+                    section("Deleted on \(host.name)", count: past.count) {
+                        ForEach(past, id: \.id) { info in
+                            HistoryRow(agent: Agent(id: info.id, projectID: info.projectId, title: info.title,
+                                                    provider: Provider(rawValue: info.provider) ?? .claude, model: info.model,
+                                                    role: "", cwd: "", branch: info.branch),
+                                       project: host.projects.first { $0.id == info.projectId }?.name ?? host.name,
+                                       detail: info.endedAt.map { "Deleted \(Date(timeIntervalSince1970: $0).relative)" } ?? "Deleted",
+                                       status: nil, open: nil)
+                        }
+                    }
+                }
                 if !store.history.entries.isEmpty {
                     Button("Clear History…") { confirmClear = true }
                         .buttonStyle(.glass)
@@ -160,6 +177,11 @@ struct HistoryView: View {
             .frame(maxWidth: .infinity)
         }
         .onAppear { store.history.trim() }
+        .task {
+            for host in store.hosts.hosts where host.status.isConnected {
+                remotePast[host.id] = await store.remoteHistory(host)
+            }
+        }
         .confirmationDialog("Clear the history of deleted agents?", isPresented: $confirmClear) {
             Button("Clear History", role: .destructive) { store.history.clear() }
         } message: {

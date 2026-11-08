@@ -67,7 +67,7 @@ Every agent shows its tokens and an estimated cost. The Overview charts your act
 - **History:** every agent you've run, including ones deleted in the last week, so you can pick an old conversation back up.
 - **Voice dictation:** hold Right Option and talk instead of typing, or press Right Option + Space to keep listening hands-free and tap Right Option to finish. If the words miss, ⌥⌘V types them again. It runs on your Mac. Off until you turn it on.
 - **Stay awake:** keep the Mac from sleeping while agents are still working.
-- **Startup region check:** optional. On Wi-Fi, HiveMinds looks up the country of your internet address (never your precise location), and if your default provider isn't offered there, the only choice is to quit.
+- **Region check:** optional. On Wi-Fi, at startup and whenever your network changes (say a VPN turns off), HiveMinds looks up the country of your internet address (never your precise location). If Claude or Codex isn't offered there, it stops every agent and lets you quit or turn the check off.
 - **Tidy sidebar:** drag projects into the order you like, and hide the ones you're done with.
 - **Light on your Mac:** native SwiftUI, no busy animations, and nothing running when you're idle.
 
@@ -112,7 +112,32 @@ open build/HiveMinds.app
 scripts/build-dmg.sh      # packages build/HiveMinds-<version>.dmg
 ```
 
-Use `scripts/build-app.sh debug` for a debug build while you work. To publish a release, follow the release protocol in `CLAUDE.md`. Run `git config core.hooksPath scripts/hooks` once after cloning to turn on the commit-message hook.
+Use `scripts/build-app.sh debug` for a debug build while you work, and `scripts/test-core.sh` to run the tests of `HiveMindsCore`, the agent logic shared with the Linux host (it also builds and tests on Linux with plain `swift test`). The terminal emulator, SwiftTerm, is kept in `Vendor/` with a small patch; see `Vendor/README.md`. To publish a release, follow the release protocol in `CLAUDE.md`. Run `git config core.hooksPath scripts/hooks` once after cloning to turn on the commit-message hook.
+
+## HiveMinds Host (in progress)
+
+`hiveminds-host` runs projects and agents on another machine (Linux first, it also runs on a Mac) with no window, for the HiveMinds app to use over the local network. The plan is in `docs/LINUX-HOST-SPEC.md` and the protocol in `docs/HOST-PROTOCOL.md`. It listens on the local network only, announces itself, pairs devices with a 6-digit code and your yes, and runs their agents. In HiveMinds, hosts on your network show in the sidebar under "On this network": press Pair…, type the code the host shows and say `y` on the host. Its projects then appear under This Mac, and New Agent in one of them runs the agent there. Settings > Hosts lists paired hosts and pairs by address. The AUR package is ready but not published yet.
+
+To try it from source (Swift 6 on Linux, or Command Line Tools on a Mac):
+
+On Arch or CachyOS, once it's published, install the AUR package `hiveminds-host-bin`; the prebuilt binary needs no Swift. To try the package before that, build the tarball (below), copy it into `packaging/aur/hiveminds-host-bin/` as `hiveminds-host-bin-<version>.tar.gz`, and run `makepkg -si` there. It prints the setup steps: add a project, `systemctl --user enable --now hiveminds-host`, `sudo loginctl enable-linger $USER` to keep it running when you're logged out, and `hiveminds-host pair` for the code. On another Linux, use the tarball from the GitHub release; its `README.txt` says how.
+
+To build the Linux binary yourself: `scripts/build-host-linux.sh` on a Linux machine with Swift makes `build/hiveminds-host-<version>-linux-<arch>.tar.gz`. On an Apple silicon Mac, `scripts/build-host-x86_64.sh` makes the x86_64 one in the Lima VM (`HANDOFF.md`, "Building and testing") and updates `packaging/aur/`.
+
+To run it from source:
+
+```sh
+swift build -c release --product hiveminds-host     # Linux: add --static-swift-stdlib for a binary that runs without Swift installed
+.build/release/hiveminds-host projects add ~/code/my-game
+.build/release/hiveminds-host serve                 # shows its address and a pairing code; Ctrl+C stops it and its agents
+.build/release/hiveminds-host status                # from another terminal
+.build/release/hiveminds-host devices list          # paired devices; `devices revoke NAME` removes one
+.build/release/hiveminds-host log --follow          # the audit log
+```
+
+On Linux, discovery uses Avahi (`avahi-daemon` running, and its `libdns_sd` library, which Arch and CachyOS's `avahi` package include). Without it the host still works; devices connect by address. A host started without a terminal (systemd) shows pairing codes in `hiveminds-host pair`.
+
+Checks: `scripts/test-app-remote.sh` (the app against a local host), `scripts/test-host.sh` (agents, stopping; `--real` uses the real Claude Code with Haiku) and `scripts/test-host-network.sh` (pairing, the defences, two devices sharing an agent; on Linux add `--non-private <address>`). To test on a Linux machine, `scripts/copy-to-linux.sh user@address` copies the source over SSH; `docs/HOST-TESTING.md` walks through a full test on CachyOS, including trying it from the Mac.
 
 ## Learn more
 
@@ -121,3 +146,7 @@ Use `scripts/build-app.sh debug` for a debug build while you work. To publish a 
 - [HANDOFF.md](HANDOFF.md): the plan, decisions and progress.
 
 More games and apps by eptkod, including free browser games, are at **[home.eptkod.com](https://home.eptkod.com/)**.
+
+## Licence
+
+MIT, so you can reuse the code as long as you keep the copyright notice (`LICENSE`). The libraries built into the app and the host have their own licences, listed in `THIRD-PARTY-NOTICES.txt` inside each download.

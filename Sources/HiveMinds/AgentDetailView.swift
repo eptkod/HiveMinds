@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 import SwiftTerm
+import HiveMindsCore
+import HiveMindsProtocol
 
 struct AgentDetailView: View {
     @Environment(AppStore.self) private var store
@@ -23,7 +25,9 @@ struct AgentDetailView: View {
                     .foregroundStyle(s.status == .needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                TeamBar(agentID: agent.id)
                 Spacer(minLength: 12)
+                HostLabel(agentID: agent.id)
                 Text(shortDetails)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -32,7 +36,7 @@ struct AgentDetailView: View {
                 TokenBadge(agents: [agent.id])
                 HStack(spacing: 2) {
                     ChangesButton(agent: agent)
-                    if agent.branch != nil {
+                    if agent.branch != nil && !store.isRemote(agent.id) {
                         Button { showingPR = true } label: {
                             if let pr = agent.pullRequest {
                                 Label("#\(pr.number) \(pr.label)", systemImage: "arrow.triangle.pull").labelStyle(.titleAndIcon)
@@ -47,9 +51,11 @@ struct AgentDetailView: View {
                         Button("Show Changes…") { store.showingChanges = agent }
                             .disabled(!store.canShowChanges(agent))
                         Divider()
-                        Button("Show in Finder") { store.revealInFinder(agent.cwd) }
-                        OpenInMenu(path: agent.cwd)
-                        Button("Copy Folder Path") { copyToClipboard(agent.cwd) }
+                        if !store.isRemote(agent.id) {
+                            Button("Show in Finder") { store.revealInFinder(agent.cwd) }
+                            OpenInMenu(path: agent.cwd)
+                            Button("Copy Folder Path") { copyToClipboard(agent.cwd) }
+                        }
                         if let branch = agent.branch {
                             Button("Copy Branch Name") { copyToClipboard(branch) }
                         }
@@ -94,6 +100,7 @@ struct AgentDetailView: View {
                     TerminalHost(agent: agent)
                         .id(store.terminalGeneration[agent.id, default: 0])
                         .padding(10)
+                        .overlay { HostOfflineCover(agentID: agent.id).padding(10) }
                 }
             }
             .background(Theme.surface.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -117,7 +124,8 @@ struct AgentDetailView: View {
         if agent.model != "default" { parts.append(agent.model) }
         if let e = agent.effort { parts.append("\(e.label.lowercased()) effort") }
         parts.append(agent.branch.map { "branch \($0)" } ?? (store.project(agent.projectID)?.name ?? ""))
-        parts.append(agent.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+        if let host = store.remoteHost(of: agent.id) { parts.append("on \(host.name)") }
+        else { parts.append(agent.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
         return parts.joined(separator: " · ")
     }
 }
@@ -129,7 +137,12 @@ struct TerminalHost: NSViewRepresentable {
     var focus = true
 
     func makeNSView(context: Context) -> NSView {
-        TerminalSlot(term: Terminals.shared.view(for: agent), focus: focus)
+        // An agent on a host is drawn from what the host sends; one on This Mac runs in its own terminal view.
+        if Terminals.shared.store?.isRemote(agent.id) == true {
+            let v = RemoteTerminals.shared.view(for: agent)
+            return TerminalSlot(term: v, focusTarget: v.term, focus: focus)
+        }
+        return TerminalSlot(term: Terminals.shared.view(for: agent), focus: focus)
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
@@ -142,10 +155,13 @@ struct TerminalHost: NSViewRepresentable {
 final class TerminalSlot: NSView {
     private static var live: [ObjectIdentifier: [TerminalSlot]] = [:]
     private let term: NSView
+    /// What gets the keyboard when the slot shows (the terminal itself, or a terminal inside `term`).
+    private let focusTarget: NSView
     private let focus: Bool
 
-    init(term: NSView, focus: Bool) {
+    init(term: NSView, focusTarget: NSView? = nil, focus: Bool) {
         self.term = term
+        self.focusTarget = focusTarget ?? term
         self.focus = focus
         super.init(frame: .zero)
         adopt()
@@ -174,7 +190,7 @@ final class TerminalSlot: NSView {
         if window != nil {
             slots.append(self)
             adopt()
-            if focus { DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(self?.term) } }
+            if focus { DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(self?.focusTarget) } }
         } else if term.superview === self || term.superview == nil {
             slots.last?.adopt()
         }

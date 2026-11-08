@@ -3,6 +3,8 @@ import AVFoundation
 import Observation
 import SwiftTerm
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// The key you hold (or tap) to dictate. Only works while HiveMinds is the app in front.
 enum VoiceKey: String, CaseIterable, Identifiable {

@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// How a meeting runs, as Agent Office has them.
 enum MeetingPattern: String, Codable, CaseIterable, Identifiable {
@@ -458,6 +460,7 @@ extension AppStore {
                       rounds: Int, prNumber: Int?, model: String, otherModel: String? = nil) async throws {
         guard tools.claude != nil else { throw NewAgentError("Meetings run on Claude Code, which isn't installed.") }
         guard let project = project(projectID) else { throw NewAgentError("Pick a project first.") }
+        if let host = remoteHost(ofProject: projectID) { throw NewAgentError("Meetings run on this Mac for now, and \(project.name) is on \(host.name).") }
         let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         if pattern == .review && prNumber == nil { throw NewAgentError("Enter the number of the pull request to review.") }
         if pattern != .review && topic.isEmpty { throw NewAgentError("Say what the meeting is about.") }
@@ -543,6 +546,7 @@ extension AppStore {
     /// ready, or typed once its session has started.
     func sendInput(_ agentID: UUID, _ text: String) {
         guard let agent = agent(agentID) else { return }
+        if let host = remoteHost(of: agentID) { return remote(host, .typeText(TypeText(agentID, text: text)), "type into") }
         stopped.remove(agentID)
         if !Terminals.shared.isRunning(agentID) {
             if agent.hasStarted { pendingInput[agentID] = text } else { update(agentID) { $0.pendingTask = text } }

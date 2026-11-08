@@ -21,6 +21,8 @@ cp "$BIN/HiveMinds" "$APP/Contents/MacOS/HiveMinds"
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 # App icon. Regenerate it with branding/scripts/render.sh after changing the design.
 cp branding/icon/HiveMinds.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP/Contents/Resources/LICENSE"
+scripts/third-party-notices.sh > "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt"
 # Optional Whisper helper for dictation (Settings > Voice). Built once and cached; HIVEMINDS_NO_WHISPER=1 leaves it out.
 if [ -z "${HIVEMINDS_NO_WHISPER:-}" ]; then
   if scripts/build-whisper-helper.sh; then
@@ -42,8 +44,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>HiveMinds</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.7.0</string>
-  <key>CFBundleVersion</key><string>8</string>
+  <key>CFBundleShortVersionString</key><string>1.8.0</string>
+  <key>CFBundleVersion</key><string>9</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>

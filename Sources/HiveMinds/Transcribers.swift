@@ -4,6 +4,8 @@ import Foundation
 import Observation
 import Speech
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Turns a clip of 16 kHz mono audio into text. Everything runs on this Mac.
 protocol Transcriber {

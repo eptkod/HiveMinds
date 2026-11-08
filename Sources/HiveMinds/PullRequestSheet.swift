@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Shows what an agent's branch changed, drafts a title and description, and only pushes when you say so.
 struct PullRequestSheet: View {

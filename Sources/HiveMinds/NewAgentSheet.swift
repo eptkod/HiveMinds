@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// One question up front (what should it work on?). Everything else has a sensible default and sits under Options.
 struct NewAgentSheet: View {
@@ -30,10 +32,15 @@ struct NewAgentSheet: View {
     @State private var splitEffort: Effort?
 
     private var project: Project? { projectID.flatMap { store.project($0) } }
+    /// A project on a host: its agents start there. Split up and attachments are This Mac only for now.
+    private var isRemote: Bool { projectID.map(store.isRemoteProject) ?? false }
+    private var projectIsGit: Bool { projectID.map(store.isGitRepo) ?? false }
     /// Agents working side by side get their own branches, whatever the default, so they don't trip over each other.
-    private var defaultOwnBranch: Bool { (isSplit || AgentDefaults.ownBranch) && (project?.isGitRepo ?? false) }
+    private var defaultOwnBranch: Bool { (isSplit || AgentDefaults.ownBranch) && projectIsGit }
     /// The planner runs on Claude Code, so splitting needs it installed.
-    private var isSplit: Bool { splitting && store.tools.claude != nil }
+    private var isSplit: Bool { splitting && store.tools.claude != nil && !isRemote }
+    /// What can run the agent: what's installed here, or (on a host) either; the host says if it's missing.
+    private var providers: [Provider] { isRemote ? Provider.allCases : store.tools.providers }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -109,13 +116,15 @@ struct NewAgentSheet: View {
                 Spacer()
                 if !projectGiven {
                     Picker("Project", selection: $projectID) {
-                        ForEach(store.shownProjects) { Text($0.name).tag(Optional($0.id)) }
+                        ForEach(store.shownProjects) { p in
+                            Text(store.remoteHost(ofProject: p.id).map { "\(p.name) · \($0.name)" } ?? p.name).tag(Optional(p.id))
+                        }
                     }
                     .labelsHidden()
                     .fixedSize()
                     .onChange(of: projectID) { _, _ in ownBranch = defaultOwnBranch }
                 }
-                if store.tools.claude != nil {
+                if store.tools.claude != nil && !isRemote {
                     Picker("Kind", selection: $splitting.animation(Motion.bouncy)) {
                         Text("One agent").tag(false)
                         Text("Split up").tag(true)
@@ -134,7 +143,11 @@ struct NewAgentSheet: View {
                     .textFieldStyle(.plain)
                     .font(.body)
                     .lineLimit(4...10)
-                if !attachments.isEmpty { AttachmentStrip(items: $attachments) }
+                if !attachments.isEmpty && !isRemote { AttachmentStrip(items: $attachments) }
+                if isRemote, let host = store.remoteHost(ofProject: projectID!) {
+                    Text("Runs on \(host.name), with its Claude Code login.\(attachments.isEmpty ? "" : " Attachments stay on this Mac, so they aren't sent.")")
+                        .font(.caption).foregroundStyle(.tertiary)
+                } else {
                 HStack {
                     Button(action: chooseFiles) {
                         Image(systemName: "paperclip").foregroundStyle(.secondary)
@@ -146,6 +159,7 @@ struct NewAgentSheet: View {
                             .font(.caption).foregroundStyle(.tertiary)
                     }
                     Spacer()
+                }
                 }
             }
             .padding(12)
@@ -173,7 +187,7 @@ struct NewAgentSheet: View {
             }
             .foregroundStyle(.secondary)
 
-            if isSplit && (project?.isGitRepo ?? false) && !ownBranch {
+            if isSplit && projectIsGit && !ownBranch {
                 Label("Without their own branches, the agents share one folder and may get in each other's way.", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
             }
@@ -199,11 +213,11 @@ struct NewAgentSheet: View {
 
     private var options: some View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-            if store.tools.providers.count > 1 {
+            if providers.count > 1 {
                 GridRow {
                     Text("Runs on")
                     Picker("Runs on", selection: $provider) {
-                        ForEach(store.tools.providers) { Text($0.label).tag($0) }
+                        ForEach(providers) { Text($0.label).tag($0) }
                     }
                     .labelsHidden().fixedSize()
                     .onChange(of: provider) { _, p in model = p == .claude ? AgentDefaults.model : "default" }
@@ -256,7 +270,7 @@ struct NewAgentSheet: View {
                         .help("Writes a plan first and waits for you to approve it before changing anything.")
                 }
             }
-            if project?.isGitRepo ?? false {
+            if projectIsGit {
                 GridRow {
                     Text("Own branch")
                     Toggle("Own branch", isOn: $ownBranch)
@@ -282,7 +296,7 @@ struct NewAgentSheet: View {
         if isSplit {
             store.splitUp(projectID: projectID, provider: provider, model: splitModel == "auto" ? nil : splitModel, effort: splitEffort,
                           access: access, planMode: planMode, role: role, request: task, attachments: attachments,
-                          ownBranch: ownBranch && (project?.isGitRepo ?? false))
+                          ownBranch: ownBranch && projectIsGit)
             dismiss()
             return
         }
@@ -291,7 +305,7 @@ struct NewAgentSheet: View {
         Task {
             do {
                 try await store.createAgent(projectID: projectID, provider: provider, model: model, effort: effort,
-                                            access: access, planMode: planMode, role: role, task: task, attachments: attachments, ownBranch: ownBranch && (project?.isGitRepo ?? false))
+                                            access: access, planMode: planMode, role: role, task: task, attachments: isRemote ? [] : attachments, ownBranch: ownBranch && projectIsGit)
                 dismiss()
             } catch {
                 self.error = error.localizedDescription

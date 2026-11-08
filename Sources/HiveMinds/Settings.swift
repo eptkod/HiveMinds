@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 import AVFoundation
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Settings are stored in UserDefaults through @AppStorage, so they're kept when the app quits.
 enum SettingKey {
@@ -52,6 +54,11 @@ enum SettingKey {
     static let voiceLanguage = "voice.language"
     static let voiceModel = "voice.model"
     static let voiceVocabulary = "voice.vocabulary"
+    /// HiveMinds Host (Settings > Hosts): look for hosts on the network, connect to paired ones at launch, and
+    /// the name teammates and host logs see.
+    static let hostsDiscover = "hosts.discover"
+    static let hostsAutoConnect = "hosts.autoConnect"
+    static let hostsDisplayName = "hosts.displayName"
     /// Whether one kind of moment (permission, question, error, done) makes its sound.
     static func sound(_ cue: Cue) -> String { "sounds.\(cue.rawValue)" }
     /// How each provider signs in: "plan" or "apiKey". The key itself is in the Keychain.
@@ -64,6 +71,10 @@ enum SettingDefault {
     static let opacityRange = 0.2...1.0
     static let blurRange = 0.0...60.0
     static let showUsage = true
+    static let hostsDiscover = true
+    static let hostsAutoConnect = true
+    /// Empty means the Mac's own name.
+    static let hostsDisplayName = ""
     static let defaultProvider = Provider.claude.rawValue
     static let defaultModel = "default"
     static let defaultEffort = Effort.medium.rawValue
@@ -172,7 +183,7 @@ struct WindowAppearance: ViewModifier {
         content
             .containerBackground(Color.black.opacity(clampedOpacity), for: .window)
             .background(WindowConfigurator(blur: Int(blur.rounded())))
-            .onChange(of: opacity, initial: true) { _, _ in Terminals.shared.applyAppearance(); Shells.shared.applyAppearance() }
+            .onChange(of: opacity, initial: true) { _, _ in Terminals.shared.applyAppearance(); Shells.shared.applyAppearance(); RemoteTerminals.shared.applyAppearance() }
     }
 
     private var clampedOpacity: Double {
@@ -261,6 +272,9 @@ struct SettingsView: View {
             }
             Tab("Accounts", systemImage: "key", value: "accounts") {
                 AccountSettings()
+            }
+            Tab("Hosts", systemImage: "server.rack", value: "hosts") {
+                HostSettings()
             }
             Tab("Location", systemImage: "location", value: "location") {
                 LocationSettings()

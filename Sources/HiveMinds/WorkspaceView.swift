@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// A project's workspace: a row of tabs (the Canvas with everything at once, each agent, and any browser or shell tabs)
 /// over whichever tab is open. Picking a project or one of its agents in the sidebar opens it.
@@ -52,9 +54,13 @@ struct WorkspaceTabBar: View {
                             store.selection = .project(project.id)
                         }
                         ForEach(store.agents(in: project)) { agent in
-                            WorkspaceTab(selected: store.selection == .agent(agent.id), namespace: selection, help: store.state(agent.id).activity) {
+                            WorkspaceTab(selected: store.selection == .agent(agent.id), namespace: selection,
+                                         help: store.remoteHost(of: agent.id).map { "On \($0.name) · \(store.state(agent.id).activity)" } ?? store.state(agent.id).activity) {
                                 StatusDot(status: store.state(agent.id).status, size: 7)
                                 Text(agent.title)
+                                if store.isRemote(agent.id) {
+                                    Image(systemName: "server.rack").font(.caption2).foregroundStyle(.tertiary)
+                                }
                             } action: {
                                 store.selection = .agent(agent.id)
                             }
@@ -121,10 +127,13 @@ struct WorkspaceTabBar: View {
 
             Menu {
                 Button("New Agent") { store.beginNewAgent(in: project.id) }
-                Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
-                Button("New Shell Tab") { store.newShellTab(in: project.id) }
-                Button("New Meeting…") { store.beginNewMeeting() }
-                    .disabled(store.tools.claude == nil)
+                // Browser and shell tabs, and meetings, are on This Mac only for now.
+                if !store.isRemoteProject(project.id) {
+                    Button("New Browser Tab") { store.newBrowserTab(in: project.id) }
+                    Button("New Shell Tab") { store.newShellTab(in: project.id) }
+                    Button("New Meeting…") { store.beginNewMeeting() }
+                        .disabled(store.tools.claude == nil)
+                }
             } label: {
                 Image(systemName: "plus")
             }
@@ -287,6 +296,8 @@ struct AgentTile<Drag: Gesture>: View {
                     .lineLimit(1)
                     .shownInTiles(from: 460)
                 Spacer(minLength: 6)
+                TeamBar(agentID: agent.id).shownInTiles(from: 340)
+                HostLabel(agentID: agent.id).shownInTiles(from: 520)
                 TokenBadge(agents: [agent.id]).shownInTiles(from: 380)
                 ChangesButton(agent: agent).shownInTiles(from: 280)
                 Button { store.selection = .agent(agent.id) } label: {
@@ -325,6 +336,7 @@ struct AgentTile<Drag: Gesture>: View {
                         .id(store.terminalGeneration[agent.id, default: 0])
                         .padding(.horizontal, 8)
                         .padding(.bottom, 8)
+                        .overlay { HostOfflineCover(agentID: agent.id).padding(.horizontal, 8).padding(.bottom, 8) }
                 }
             }
         }

@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 import SwiftTerm
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// One shell tab's live terminal. It lives as long as the tab, so switching tabs doesn't end the shell.
 @MainActor @Observable

@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// Tokens each Claude agent has used, and what they'd cost at Claude API prices.
 /// - Tokens are counted from the agent's transcript, which Claude Code writes as it goes. The status line's

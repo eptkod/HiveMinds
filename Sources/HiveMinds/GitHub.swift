@@ -1,5 +1,7 @@
 import AppKit
 import Observation
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// GitHub, through the GitHub CLI (gh), the same way Agent Office does it. gh keeps the sign-in in
 /// the macOS Keychain; the app never sees or stores the token.

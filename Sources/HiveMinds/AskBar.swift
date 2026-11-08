@@ -1,4 +1,6 @@
 import SwiftUI
+import HiveMindsCore
+import HiveMindsProtocol
 
 /// What an agent is waiting on, with the answers right there: Allow or Don't Allow for a permission prompt,
 /// the options (or your own words) for a question, Approve or Keep Planning for a plan. Shown on Overview cards,
